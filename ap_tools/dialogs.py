@@ -16,8 +16,9 @@ class CreateTagFilesDialogData:
         self.total_price = total_price
 
 
-def create_tag_files_dialog(data: CreateTagFilesDialogData,
-                            callback: typing.Callable[[ap.Dialog], None]) -> ap.Dialog:
+def create_tag_files_dialog(
+        data: CreateTagFilesDialogData,
+        callback: typing.Callable[[ap.Dialog], None]) -> ap.Dialog:
     proceed_dialog = ap.Dialog()
     proceed_dialog.title = "Estimated Costs"
     ctx = ap.get_context()
@@ -25,15 +26,21 @@ def create_tag_files_dialog(data: CreateTagFilesDialogData,
     costs = round(data.total_price, 6)
     if costs < 0.0001:
         costs = "<$0.0001"
-    else :
+    else:
         costs = f"~${costs}"
-    proceed_dialog.add_text(f"Processing files: {len(data.input_paths)}"
-                            f"\nInput token count: {data.total_tokens}"
-                            f"\nOutput token count: ~{data.combined_output_tokens}"
-                            f"\nPixel count: {data.pixel_count}"
-                            f"\nCosts: {costs}")
+
+    costs_text = \
+        f"Processing files: {len(data.input_paths)}" \
+        f"\nInput token count: {data.total_tokens}" \
+        f"\nOutput token count: ~{data.combined_output_tokens}"
+
+    if data.pixel_count > 0:
+        costs_text += f"\nPixel count: {data.pixel_count}"
+
+    costs_text += f"\nCosts: {costs}"
+    proceed_dialog.add_text(costs_text)
     proceed_dialog.add_empty()
-    proceed_dialog.add_checkbox(True, None, var="skip_existing_tags",text="Skip existing tags")
+    proceed_dialog.add_checkbox(True, None, var="skip_existing_tags", text="Skip existing tags")
     (
         proceed_dialog
         .add_button("Continue", callback=callback)
@@ -49,10 +56,11 @@ class CreateTagFoldersDialogData:
         self.output_token_price = output_token_price
 
 
-def create_tag_folders_dialog(data: CreateTagFoldersDialogData,
-                              callback: typing.Callable[[ap.Dialog], None]) -> ap.Dialog:
+def create_tag_folders_dialog(
+        data: CreateTagFoldersDialogData,
+        callback: typing.Callable[[ap.Dialog], None]) -> ap.Dialog:
     proceed_dialog = ap.Dialog()
-    proceed_dialog.title = "Estimated Costs"    
+    proceed_dialog.title = "Estimated Costs"
     ctx = ap.get_context()
     proceed_dialog.icon = ctx.icon
     combined_tokens = sum([folder[2] for folder in data.folders])
@@ -62,7 +70,7 @@ def create_tag_folders_dialog(data: CreateTagFoldersDialogData,
     costs = round((combined_input_price + combined_output_price), 6)
     if costs < 0.0001:
         costs = "<$0.0001"
-    else :
+    else:
         costs = f"~${costs}"
     proceed_dialog.add_text(f"Input token count: {combined_tokens}"
                             f"\nOutput token count: ~{combined_output_tokens}"

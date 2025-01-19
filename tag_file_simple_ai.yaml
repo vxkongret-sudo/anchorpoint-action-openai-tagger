@@ -1,0 +1,31 @@
+# Anchorpoint Markup Language
+# Predefined Variables: e.g. ${path}
+# Environment Variables: e.g. ${MY_VARIABLE}
+# Full documentation: https://docs.anchorpoint.app/Actions/Reference
+
+version: 1.0
+
+action:
+  name: "Tag File by Name with AI"
+
+  version: 1
+  id: "ap::open_ai_tagger::file_simple"
+  category: "ai"
+  type: python
+  author: "Hermesiss"
+  description: "Creates AI-based tags on selected files by their names. Cheaper and can be used on any file type, but less accurate."
+  enable: true
+  icon:
+    path: icons/tagImage.svg
+
+  python_packages:
+    - tiktoken
+
+  script: "tag_file_simple_ai.py"
+  settings: "package_settings.py"
+
+  register:
+    file:
+      enable: true
+#    folder: # Uncomment when all bugs with folder tagging are fixed
+#      enable: true

@@ -26,3 +26,4 @@ action:
   actions:
     - ap::open_ai_tagger::folder
     - ap::open_ai_tagger::file
+    - ap::open_ai_tagger::file_simple

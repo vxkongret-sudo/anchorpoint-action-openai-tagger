@@ -8,7 +8,6 @@ import anchorpoint as ap
 import apsync as aps
 import os
 import tempfile
-import random
 import hashlib
 
 import requests
@@ -17,10 +16,10 @@ from ai.api import init_openai_key, OPENAI_API_URL
 from ap_tools.dialogs import CreateTagFilesDialogData, create_tag_files_dialog
 from common.logging import log, log_err
 from image.resize import resize_image
-from labels.attributes import ensure_attribute, replace_tag, attribute_colors
+from labels.attributes import ensure_attribute, replace_tag, check_or_update_attribute
 from labels.extensions import unity_extensions, unreal_extensions, audio_extensions, temp_extensions, godot_extensions, \
     text_extensions
-from labels.variants import engines_variants, types_variants, genres_variants, objects_variants
+from labels.variants import types_variants, genres_variants, objects_variants
 from ai.constants import input_pixel_price, input_token_price, output_token_price
 from ai.tokens import count_tokens
 from common.settings import tagger_settings
@@ -46,7 +45,6 @@ images_per_request = 10
 proceed_dialog: ap.Dialog
 
 all_variants = {
-    "AI-Engines": engines_variants,
     "AI-Types": types_variants,
     "AI-Genres": genres_variants,
     "AI-Objects": objects_variants
@@ -228,25 +226,6 @@ def get_openai_response_images(in_prompt, image_paths: list[str], model="gpt-4o-
 
 previews_sliced = []
 original_files: dict[str, str] = {}
-
-
-def check_or_update_attribute(attribute: aps.Attribute, tag: str, database: aps.Api):
-    anchorpoint_tags = attribute.tags
-    colors = attribute_colors
-
-    # Create a set of anchorpoint tag names for faster lookup
-    anchorpoint_tag_names = {a_tag.name for a_tag in anchorpoint_tags}
-    if tag not in anchorpoint_tag_names:
-        new_tag = aps.AttributeTag(tag, random.choice(colors))
-        anchorpoint_tags.append(new_tag)
-        database.attributes.set_attribute_tags(attribute, anchorpoint_tags)
-        return new_tag
-
-    for a_tag in anchorpoint_tags:
-        if a_tag.name == tag:
-            return a_tag
-
-    raise ValueError(f"Tag {tag} not found in the attribute tags: {anchorpoint_tag_names}")
 
 
 def change_slices_to_skip(database):

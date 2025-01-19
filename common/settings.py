@@ -12,6 +12,7 @@ class TaggerSettings:
         self.local_settings.set(key, value)
 
     openai_api_key: str
+    openai_api_admin_key: str
     file_label_ai_types: bool
     file_label_ai_genres: bool
     file_label_ai_objects: bool
@@ -30,6 +31,7 @@ class TaggerSettings:
 
     def load(self):
         self.openai_api_key = str(self.get("openai_api_key"))
+        self.openai_api_admin_key = str(self.get("openai_api_admin_key"))
         self.file_label_ai_types = bool(self.get("file_label_ai_types", True))
         self.file_label_ai_genres = bool(self.get("file_label_ai_genres", True))
         self.file_label_ai_objects = bool(self.get("file_label_ai_objects", True))
@@ -42,6 +44,7 @@ class TaggerSettings:
 
     def store(self):
         self.set("openai_api_key", self.openai_api_key)
+        self.set("openai_api_admin_key", self.openai_api_admin_key)
         self.set("file_label_ai_types", self.file_label_ai_types)
         self.set("file_label_ai_genres", self.file_label_ai_genres)
         self.set("file_label_ai_objects", self.file_label_ai_objects)
