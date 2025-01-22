@@ -278,9 +278,6 @@ def main():
     log(selected_folders)
 
     if len(selected_folders) > 0:
-        ap.UI().show_error(
-            "Folders are experimental", "Please navigate inside the folder and change the view to List",
-            60000)
         for folder in selected_folders:
             inner_files = get_all_files_recursive(folder)
             log(inner_files)
