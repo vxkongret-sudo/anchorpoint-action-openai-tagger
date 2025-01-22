@@ -1,5 +1,4 @@
 from datetime import datetime, timedelta
-from time import time
 
 import anchorpoint as ap
 import os

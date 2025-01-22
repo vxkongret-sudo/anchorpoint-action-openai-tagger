@@ -1,35 +1,32 @@
-# This example demonstrates how to create a simple dialog in Anchorpoint
 import json
+import os
+import random
 from typing import Any
 
 import anchorpoint as ap
 import apsync as aps
-import os
-import random
-
 import requests
 
 from ai.api import init_openai_key, OPENAI_API_URL
+from ai.constants import input_token_price, output_token_price
+from ai.response_schema import get_folder_properties, get_folder_response_format
+from ai.tokens import count_tokens
 from ap_tools.dialogs import CreateTagFoldersDialogData, create_tag_folders_dialog
 from common.logging import log, log_err
+from common.settings import tagger_settings
 from labels.attributes import ensure_attribute, replace_tag, attribute_colors
 from labels.variants import engines_variants, types_variants, genres_variants
-
-from ai.constants import input_token_price, output_token_price
-from ai.tokens import count_tokens
-
-from common.settings import tagger_settings
 
 prompt = "Write tags for the folder:"
 
 if tagger_settings.folder_use_ai_engines:
-    prompt += "required game engines (e.g. UE if it has *.uasset or Unity if it has *.unitypackage) or 'All' if assets have common types, "
+    prompt += "required game engines (e.g. UE if it has *.uasset or Unity if it has *.unitypackage) or 'Any' if assets have common types, "
 
 if tagger_settings.folder_use_ai_types:
-    prompt += "content types (Texture, Sprite, Model, VFX, SFX, etc.), "
+    prompt += "content types (Texture, Sprite, Model, VFX, SFX, etc.) (min 1), "
 
 if tagger_settings.folder_use_ai_genres:
-    prompt += "detailed genres, "
+    prompt += "detailed genres (min 1), "
 
 prompt += "fill all tags"
 
@@ -43,57 +40,9 @@ all_variants = {
     "AI-Genres": genres_variants,
 }
 
-items = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": [],
-    "properties": {}
-}
+items = get_folder_properties()
 
-if tagger_settings.folder_use_ai_engines:
-    items["required"].append("engines")
-    items["properties"]["engines"] = {
-        "type": "array",
-        "items": {
-            "type": "string",
-            "additionalProperties": False,
-        }
-    }
-
-if tagger_settings.folder_use_ai_types:
-    items["required"].append("types")
-    items["properties"]["types"] = {
-        "type": "array",
-        "items": {
-            "type": "string",
-            "additionalProperties": False,
-        }
-    }
-
-if tagger_settings.folder_use_ai_genres:
-    items["required"].append("genres")
-    items["properties"]["genres"] = {
-        "type": "array",
-        "items": {
-            "type": "string",
-            "additionalProperties": False,
-        }
-    }
-
-response_format = {"type": "json_schema", "json_schema":
-    {
-        "name": "TaggingSchema",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["items"],
-            "properties": {
-                "items": items
-            },
-            "name": "TaggingSchema"
-        }
-    }}
+response_format = get_folder_response_format(items)
 
 
 def get_folder_structure(input_path) -> dict[Any, list[Any]]:
@@ -177,13 +126,16 @@ def get_openai_response(in_prompt, model="gpt-4o-mini") -> dict:
         response = requests.post(OPENAI_API_URL, headers=headers, json=payload)
         response.raise_for_status()
         result = response.json()
+        prompt_tokens = result["usage"]["prompt_tokens"]
+        completion_tokens = result["usage"]["completion_tokens"]
+        log(f"Prompt tokens: {prompt_tokens}, Completion tokens: {completion_tokens}")
         result_content = result["choices"][0]["message"]["content"].strip()
         parsed = json.loads(result_content)
         return parsed["items"]
     except requests.exceptions.RequestException as e:
         return {"error": str(e)}
     except KeyError:
-        return {"error": "No response from OpenAI"}
+        return {"error": "Wrong response from OpenAI"}
 
 
 def tag_folder(
@@ -199,8 +151,8 @@ def tag_folder(
 
     tags = [
         response["engines"] if tagger_settings.folder_use_ai_engines else None,
-        response["types"] if tagger_settings.folder_use_ai_types else None,
-        response["genres"] if tagger_settings.folder_use_ai_genres else None
+        (response["types"] + response["types_additional"]) if tagger_settings.folder_use_ai_types else None,
+        (response["genres"] + response["genres_additional"]) if tagger_settings.folder_use_ai_genres else None
     ]
 
     if len(tags) != len(attributes):

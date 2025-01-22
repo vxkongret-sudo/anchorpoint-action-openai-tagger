@@ -13,12 +13,12 @@ import hashlib
 import requests
 
 from ai.api import init_openai_key, OPENAI_API_URL
+from ai.response_schema import get_file_properties, get_file_response_format
 from ap_tools.dialogs import CreateTagFilesDialogData, create_tag_files_dialog
 from common.logging import log, log_err
 from image.resize import resize_image
 from labels.attributes import ensure_attribute, replace_tag, check_or_update_attribute
-from labels.extensions import unity_extensions, unreal_extensions, audio_extensions, temp_extensions, godot_extensions, \
-    text_extensions
+from labels.extensions import extensions_without_preview
 from labels.variants import types_variants, genres_variants, objects_variants
 from ai.constants import input_pixel_price, input_token_price, output_token_price
 from ai.tokens import count_tokens
@@ -29,15 +29,15 @@ prompt = (
 )
 
 if tagger_settings.file_label_ai_types:
-    prompt += "content types (Texture, Sprite, Model, VFX, SFX, etc.),"
+    prompt += "content types (Texture, Sprite, Model, VFX, SFX, etc.) (min 1),"
 
 if tagger_settings.file_label_ai_genres:
-    prompt += "detailed genres,"
+    prompt += "detailed genres (min 1),"
 
 if tagger_settings.file_label_ai_objects:
     prompt += f"objects and other keywords in the image (min {tagger_settings.file_label_ai_objects_min}, max {tagger_settings.file_label_ai_objects_max}), "
 
-prompt += "fill all tags for each image."
+prompt += "fill all tags for each image. Use Capitalized Words"
 
 output_token_count = 200
 
@@ -50,60 +50,9 @@ all_variants = {
     "AI-Objects": objects_variants
 }
 
-items = {
-    "type": "object",
-    "additionalProperties": False,
-    "required": [],
-    "properties": {}
-}
+items = get_file_properties()
 
-if tagger_settings.file_label_ai_types:
-    items["required"].append("types")
-    items["properties"]["types"] = {
-        "type": "array",
-        "items": {
-            "type": "string",
-            "additionalProperties": False,
-        }
-    }
-
-if tagger_settings.file_label_ai_genres:
-    items["required"].append("genres")
-    items["properties"]["genres"] = {
-        "type": "array",
-        "items": {
-            "type": "string",
-            "additionalProperties": False,
-        }
-    }
-
-if tagger_settings.file_label_ai_objects:
-    items["required"].append("objects")
-    items["properties"]["objects"] = {
-        "type": "array",
-        "items": {
-            "type": "string",
-            "additionalProperties": False,
-        }
-    }
-
-response_format = {"type": "json_schema", "json_schema":
-    {
-        "name": "TaggingSchema",
-        "strict": True,
-        "schema": {
-            "type": "object",
-            "additionalProperties": False,
-            "required": ["tags"],
-            "properties": {
-                "tags": {
-                    "type": "array",
-                    "items": items
-                }
-            },
-            "name": "TaggingSchema"
-        }
-    }}
+response_format = get_file_response_format(items)
 
 
 def calculate_file_hash(file_path, hash_algorithm="sha256", length: int = 8):
@@ -222,6 +171,9 @@ def get_openai_response_images(in_prompt, image_paths: list[str], model="gpt-4o-
     except json.JSONDecodeError:
         log_err("Failed to parse the response")
         return []
+    except KeyError:
+        log_err("Wrong response from OpenAI")
+        return []
 
 
 previews_sliced = []
@@ -248,7 +200,11 @@ def change_slices_to_skip(database):
     new_previews_sliced = [
         new_previews[i:i + images_per_request] for i in
         range(0, len(new_previews), images_per_request)]
-    log(f"Reduced previews from {prev_count} to {len(new_previews)}")
+    delta = prev_count - len(new_previews)
+    if delta > 0:
+        msg = f"Reduced previews by {delta}: from {prev_count} to {len(new_previews)}"
+        log(msg)
+        ap.UI().show_info("Skipped files", msg)
     previews_sliced = new_previews_sliced
 
 
@@ -270,14 +226,17 @@ def proceed_callback(database):
                 progress.finish()
                 ap.UI().navigate_to_folder(initial_folder)
                 return
-            response = get_openai_response_images(prompt, p)
-            progress.report_progress((i + 1) / len(previews_sliced))
-            log(response)
-            if len(response) < len(p):
-                ap.UI().navigate_to_folder(initial_folder)
-                ap.UI().show_error(
-                    "Error", f"Not all images were tagged [Received {len(response)}, requested {len(p)}]")
-                raise ValueError(f"Not all images were tagged [Received {len(response)}, requested {len(p)}]")
+            while True:
+                response = get_openai_response_images(prompt, p)
+                progress.report_progress((i + 1) / len(previews_sliced))
+                log(response)
+                if len(response) < len(p):
+                    ap.UI().navigate_to_folder(initial_folder)
+                    ap.UI().show_error(
+                        "Error", f"Not all images were tagged [Received {len(response)}, requested {len(p)}], retrying")
+                    log_err(f"Not all images were tagged [Received {len(response)}, requested {len(p)}]")
+                    continue
+                break
 
             progress2 = ap.Progress("Updating tags", "Processing", infinite=False, show_loading_screen=True)
             for j, preview in enumerate(p):
@@ -289,6 +248,8 @@ def proceed_callback(database):
 
                 if tagger_settings.file_label_ai_types:
                     types = tags["types"]
+                    if "types_additional" in tags:
+                        types += tags["types_additional"]
                     types_tags = aps.AttributeTagList()
                     for k, tag in enumerate(types):
                         types[k] = replace_tag(tag, all_variants["AI-Types"])
@@ -299,6 +260,8 @@ def proceed_callback(database):
 
                 if tagger_settings.file_label_ai_genres:
                     genres = tags["genres"]
+                    if "genres_additional" in tags:
+                        genres += tags["genres_additional"]
                     genres_tags = aps.AttributeTagList()
 
                     for k, tag in enumerate(genres):
@@ -483,11 +446,7 @@ def filter_ignored_extensions(files: list[str], ignored_ext: list[list[str]]) ->
     return filtered_files
 
 
-ignored_extensions = [
-    unity_extensions, unreal_extensions, godot_extensions,
-    temp_extensions, audio_extensions,
-    text_extensions
-]
+ignored_extensions = extensions_without_preview
 
 
 def get_all_files_recursive(folder_path) -> list[str]:
