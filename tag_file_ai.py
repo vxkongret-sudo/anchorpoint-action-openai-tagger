@@ -453,9 +453,10 @@ def process_images(input_paths, database):
     log(f"Pixel count: {pixel_count}")
     log(f"Pixel price: {pixel_price}")
     progress.finish()
-    token_count = count_tokens(prompt + ", ".join(asset_names))
-    total_tokens = token_count * len(previews_sliced)
-    combined_output_tokens = len(previews) * output_token_count
+    token_prompts = count_tokens(prompt) * len(previews_sliced)
+    token_count = count_tokens(", ".join(asset_names))
+    total_tokens = token_prompts + token_count
+    combined_output_tokens = len(previews_sliced) * output_token_count
 
     total_price = total_tokens * input_token_price + pixel_price + combined_output_tokens * output_token_price
 

@@ -297,9 +297,12 @@ def process_files(input_paths, database):
     file_paths_sliced = [input_paths[i:i + files_per_request] for i in range(0, len(input_paths), files_per_request)]
 
     # calculate token count
-    token_count = count_tokens(prompt + ", ".join(input_paths))
-    total_tokens = token_count * len(file_paths_sliced)
-    combined_output_tokens = len(input_paths) * output_token_count
+    input_paths_base_names = [os.path.basename(file_path) for file_path in input_paths]
+    print(input_paths_base_names)
+    token_prompts = count_tokens(prompt) * len(file_paths_sliced)
+    token_count = count_tokens(", ".join(input_paths_base_names))
+    total_tokens = token_prompts + token_count
+    combined_output_tokens = len(file_paths_sliced) * output_token_count
 
     total_price = total_tokens * input_token_price + combined_output_tokens * output_token_price
 
