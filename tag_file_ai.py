@@ -18,9 +18,9 @@ from ap_tools.dialogs import CreateTagFilesDialogData, create_tag_files_dialog
 from common.logging import log, log_err
 from image.resize import resize_image
 from labels.attributes import ensure_attribute, replace_tag, check_or_update_attribute
-from labels.extensions import extensions_without_preview
+from labels.extensions import extensions_without_preview, filter_ignored_extensions
 from labels.variants import types_variants, genres_variants, objects_variants
-from ai.constants import input_pixel_price, input_token_price, output_token_price
+from ai.constants import INPUT_PIXEL_PRICE, INPUT_TOKEN_PRICE, OUTPUT_TOKEN_PRICE, MAX_RETRIES
 from ai.tokens import count_tokens
 from common.settings import tagger_settings
 
@@ -226,17 +226,28 @@ def proceed_callback(database):
                 progress.finish()
                 ap.UI().navigate_to_folder(initial_folder)
                 return
-            while True:
+            retries = MAX_RETRIES
+            response = None
+            while retries > 0:
+                retries -= 1
                 response = get_openai_response_images(prompt, p)
                 progress.report_progress((i + 1) / len(previews_sliced))
                 log(response)
                 if len(response) < len(p):
                     ap.UI().navigate_to_folder(initial_folder)
                     ap.UI().show_error(
-                        "Error", f"Not all images were tagged [Received {len(response)}, requested {len(p)}], retrying")
-                    log_err(f"Not all images were tagged [Received {len(response)}, requested {len(p)}]")
+                        "Error",
+                        f"Not all images were tagged [Received {len(response)}, requested {len(p)}], retrying {retries} more times")
+                    log_err(
+                        f"Not all images were tagged [Received {len(response)}, requested {len(p)}], retrying {retries} more times")
                     continue
                 break
+
+            if retries <= 0:
+                ap.UI().navigate_to_folder(initial_folder)
+                ap.UI().show_error(
+                    "Error", f"Not all files were tagged after {MAX_RETRIES} retries, aborting")
+                return
 
             progress2 = ap.Progress("Updating tags", "Processing", infinite=False, show_loading_screen=True)
             for j, preview in enumerate(p):
@@ -298,6 +309,7 @@ generating_previews_progress: Optional[ap.Progress] = None
 cancel_generating_previews = False  # hack
 ctx: Optional[ap.Context] = None
 start_time = datetime.now()
+previews_start_time = datetime.now()
 
 
 def proceed_generating_previews(workspace_id, database, output_folder):
@@ -317,7 +329,6 @@ def proceed_generating_previews(workspace_id, database, output_folder):
 
     input_path = file_input_paths[last_index + 1]
     generate_preview_async(workspace_id, input_path, output_folder, database)
-    # ctx.run_async(generate_preview_async, workspace_id, input_path, output_folder, database)
 
 
 def generate_previews(workspace_id, input_paths, database):
@@ -327,8 +338,8 @@ def generate_previews(workspace_id, input_paths, database):
         log_err("No supported files selected")
         return
 
-    global start_time
-    start_time = datetime.now()
+    global previews_start_time
+    previews_start_time = datetime.now()
     log(f"Started generating previews for {len(input_paths)} files")
 
     # start progress
@@ -384,7 +395,7 @@ def finish_generating_previews(input_paths, database):
     generating_previews_progress.finish()
     log(f"Finished generating previews for {len(input_paths)} files")
     current_time = datetime.now()
-    log(f"Generated {len(input_paths)} previews in {current_time - start_time}")
+    log(f"Generated {len(input_paths)} previews in {current_time - previews_start_time}")
     if len(input_paths) == 0:
         ap.UI().navigate_to_folder(initial_folder)
         ap.UI().show_error("No supported files selected", "Please select files to tag")
@@ -412,7 +423,7 @@ def process_images(input_paths, database):
     previews_sliced = [previews[i:i + images_per_request] for i in range(0, len(previews), images_per_request)]
 
     # calculate token count
-    pixel_price = pixel_count * input_pixel_price
+    pixel_price = pixel_count * INPUT_PIXEL_PRICE
     log(f"Pixel count: {pixel_count}")
     log(f"Pixel price: {pixel_price}")
     progress.finish()
@@ -421,30 +432,22 @@ def process_images(input_paths, database):
     total_tokens = token_prompts + token_count
     combined_output_tokens = len(previews_sliced) * output_token_count
 
-    total_price = total_tokens * input_token_price + pixel_price + combined_output_tokens * output_token_price
+    total_price = total_tokens * INPUT_TOKEN_PRICE + pixel_price + combined_output_tokens * OUTPUT_TOKEN_PRICE
 
-    data = CreateTagFilesDialogData(input_paths, total_tokens, combined_output_tokens, pixel_count, total_price)
+    req_count = len(previews_sliced)
+    not_none_attr = len(attributes) - attributes.count(None)
+    attr_count = len(input_paths) * not_none_attr
+
+    data = CreateTagFilesDialogData(
+        input_paths, total_tokens, combined_output_tokens, pixel_count, total_price,
+        req_count, attr_count
+    )
     global proceed_dialog
     proceed_dialog = create_tag_files_dialog(data, lambda d: proceed_callback(database))
     proceed_dialog.show()
 
 
 attributes = []
-
-
-def filter_ignored_extensions(files: list[str], ignored_ext: list[list[str]]) -> list[str]:
-    filtered_files = []
-    for file in files:
-        file_ext = file.split(".")[-1]
-        for ignored_extension in ignored_ext:
-            if file_ext in ignored_extension:
-                log(f"Ignoring file because of extension: {file}")
-                break
-        else:
-            filtered_files.append(file)
-
-    return filtered_files
-
 
 ignored_extensions = extensions_without_preview
 

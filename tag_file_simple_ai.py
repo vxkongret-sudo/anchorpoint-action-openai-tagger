@@ -9,13 +9,14 @@ import apsync as aps
 import requests
 
 from ai.api import init_openai_key, OPENAI_API_URL
-from ai.constants import input_token_price, output_token_price
+from ai.constants import INPUT_TOKEN_PRICE, OUTPUT_TOKEN_PRICE, MAX_RETRIES
 from ai.response_schema import get_file_properties, get_file_response_format
 from ai.tokens import count_tokens
 from ap_tools.dialogs import CreateTagFilesDialogData, create_tag_files_dialog
 from common.logging import log, log_err
 from common.settings import tagger_settings
 from labels.attributes import ensure_attribute, replace_tag, check_or_update_attribute
+from labels.extensions import filter_ignored_extensions, junk_files_extensions
 from labels.variants import types_variants, genres_variants, objects_variants
 
 prompt = (
@@ -111,11 +112,13 @@ def get_openai_response_files(in_prompt, file_paths: list[str], model="gpt-4o-mi
         log_err("Wrong response from OpenAI")
         return []
 
+
 def change_slices_to_skip(database):
     new_files = []
     prev_count = 0
     global file_paths_sliced
-    for f in file_paths_sliced:
+    for i, f in enumerate(file_paths_sliced):
+        skip_progress.report_progress(i / len(file_paths_sliced))
         for file in f:
             prev_count += 1
             ai_types_attr: Union[aps.apsync.Attribute, str] = database.attributes.get_attribute_value(
@@ -125,7 +128,6 @@ def change_slices_to_skip(database):
                 continue
 
             new_files.append(file)
-
 
     new_files_sliced = [
         new_files[i:i + files_per_request] for i in
@@ -137,86 +139,101 @@ def change_slices_to_skip(database):
         ap.UI().show_info("Skipped files", msg)
     file_paths_sliced = new_files_sliced
 
+
+skip_progress: ap.Progress
+
+
 def proceed_callback(database):
     proceed_dialog.close()
 
     skip_existing_tags = proceed_dialog.get_value("skip_existing_tags")
     if skip_existing_tags:
+        global skip_progress
+        skip_progress = ap.Progress("Calculating files to skip", "Processing", infinite=False, show_loading_screen=True)
         change_slices_to_skip(database)
+        skip_progress.finish()
 
-    def run():
-        progress = ap.Progress(
-            "Requesting AI tags", "Processing", infinite=False, show_loading_screen=True, cancelable=True)
-        global start_time
-        start_time = datetime.now()
-        log(f"Started tagging {len(file_paths_sliced)} files")
-        progress.report_progress(0)
-        for i, p in enumerate(file_paths_sliced):
-            if progress.canceled:
-                progress.finish()
-                ap.UI().navigate_to_folder(initial_folder)
-                return
-            while True:
-                response = get_openai_response_files(prompt, p)
-                progress.report_progress((i + 1) / len(file_paths_sliced))
-                log(response)
-                if len(response) < len(p):
-                    ap.UI().navigate_to_folder(initial_folder)
-                    ap.UI().show_error(
-                        "Error", f"Not all files were tagged [Received {len(response)}, requested {len(p)}], retrying")
-                    log_err(f"Not all files were tagged [Received {len(response)}, requested {len(p)}], retrying")
-                    continue
-                break
+    progress = ap.Progress(
+        "Requesting AI tags", "Processing", infinite=False, show_loading_screen=True, cancelable=True)
+    global start_time
+    start_time = datetime.now()
+    log(f"Started tagging {len(file_paths_sliced)} files")
+    progress.report_progress(0)
+    for i, p in enumerate(file_paths_sliced):
+        if progress.canceled:
+            progress.finish()
+            ap.UI().navigate_to_folder(initial_folder)
+            return
+        retries = MAX_RETRIES
+        response = []
+        while retries > 0:
+            retries -= 1
+            response = get_openai_response_files(prompt, p)
+            progress.report_progress((i + 1) / len(file_paths_sliced))
+            log(response)
+            if len(response) < len(p):
+                ap.UI().show_error(
+                    "Error",
+                    f"Not all files were tagged [Received {len(response)}, requested {len(p)}], retrying {retries} more times")
+                log_err(
+                    f"Not all files were tagged [Received {len(response)}, requested {len(p)}], retrying {retries} more times")
+                continue
+            break
 
-            progress2 = ap.Progress("Updating tags", "Processing", infinite=False, show_loading_screen=True)
-            for j, file_path in enumerate(p):
-                progress2.report_progress(j / len(p))
-                tags = response[j]
+        if retries <= 0:
+            ap.UI().navigate_to_folder(initial_folder)
+            ap.UI().show_error(
+                "Error", f"Not all files were tagged after {MAX_RETRIES} retries, aborting")
+            return
 
-                ap.UI().navigate_to_file(file_path)
+        progress2 = ap.Progress("Updating tags", "Processing", infinite=False, show_loading_screen=True)
 
-                if tagger_settings.file_label_ai_types:
-                    types = tags["types"]
-                    if "types_additional" in tags:
-                        types += tags["types_additional"]
-                    types_tags = aps.AttributeTagList()
-                    for k, tag in enumerate(types):
-                        types[k] = replace_tag(tag, all_variants["AI-Types"])
-                        new_tag = check_or_update_attribute(attributes[0], types[k], database)
-                        types_tags.append(new_tag)
+        for j, file_path in enumerate(p):
+            progress2.report_progress(j / len(p))
+            tags = response[j]
 
-                    database.attributes.set_attribute_value(file_path, "AI-Types", types_tags)
+            ap.UI().navigate_to_file(file_path)
 
-                if tagger_settings.file_label_ai_genres:
-                    genres = tags["genres"]
-                    if "genres_additional" in tags:
-                        genres += tags["genres_additional"]
-                    genres_tags = aps.AttributeTagList()
+            if tagger_settings.file_label_ai_types:
+                types = tags["types"]
+                if "types_additional" in tags:
+                    types += tags["types_additional"]
+                types_tags = aps.AttributeTagList()
+                for k, tag in enumerate(types):
+                    types[k] = replace_tag(tag, all_variants["AI-Types"])
+                    new_tag = check_or_update_attribute(attributes[0], types[k], database)
+                    types_tags.append(new_tag)
 
-                    for k, tag in enumerate(genres):
-                        genres[k] = replace_tag(tag, all_variants["AI-Genres"])
-                        new_tag = check_or_update_attribute(attributes[1], genres[k], database)
-                        genres_tags.append(new_tag)
+                database.attributes.set_attribute_value(file_path, "AI-Types", types_tags)
 
-                    database.attributes.set_attribute_value(file_path, "AI-Genres", genres_tags)
+            if tagger_settings.file_label_ai_genres:
+                genres = tags["genres"]
+                if "genres_additional" in tags:
+                    genres += tags["genres_additional"]
+                genres_tags = aps.AttributeTagList()
 
-                if tagger_settings.file_label_ai_objects:
-                    objects = tags["objects"]
-                    objects_tags = aps.AttributeTagList()
-                    for k, tag in enumerate(objects):
-                        objects[k] = replace_tag(tag, all_variants["AI-Objects"])
-                        new_tag = check_or_update_attribute(attributes[2], objects[k], database)
-                        objects_tags.append(new_tag)
+                for k, tag in enumerate(genres):
+                    genres[k] = replace_tag(tag, all_variants["AI-Genres"])
+                    new_tag = check_or_update_attribute(attributes[1], genres[k], database)
+                    genres_tags.append(new_tag)
 
-                    database.attributes.set_attribute_value(file_path, "AI-Objects", objects_tags)
-            progress2.finish()
+                database.attributes.set_attribute_value(file_path, "AI-Genres", genres_tags)
 
-        progress.finish()
-        finish_time = datetime.now()
-        log(f"Finished tagging in {finish_time - start_time}")
-        ap.UI().navigate_to_folder(initial_folder)
+            if tagger_settings.file_label_ai_objects:
+                objects = tags["objects"]
+                objects_tags = aps.AttributeTagList()
+                for k, tag in enumerate(objects):
+                    objects[k] = replace_tag(tag, all_variants["AI-Objects"])
+                    new_tag = check_or_update_attribute(attributes[2], objects[k], database)
+                    objects_tags.append(new_tag)
 
-    ctx.run_async(run)
+                database.attributes.set_attribute_value(file_path, "AI-Objects", objects_tags)
+        progress2.finish()
+
+    progress.finish()
+    finish_time = datetime.now()
+    log(f"Finished tagging in {finish_time - start_time}")
+    ap.UI().navigate_to_folder(initial_folder)
 
 
 file_paths_sliced = []
@@ -262,11 +279,13 @@ def main():
             log(inner_files)
             selected_files.extend(inner_files)
 
+    filtered_files = filter_ignored_extensions(selected_files, junk_files_extensions)
+
     global initial_folder
     initial_folder = os.path.dirname(ctx.path)
     log(f"Initial folder: {initial_folder}")
 
-    process_files(selected_files, database)
+    ctx.run_async(process_files, filtered_files, database)
     return
 
 
@@ -283,11 +302,18 @@ def process_files(input_paths, database):
     total_tokens = token_prompts + token_count
     combined_output_tokens = len(file_paths_sliced) * output_token_count
 
-    total_price = total_tokens * input_token_price + combined_output_tokens * output_token_price
+    total_price = total_tokens * INPUT_TOKEN_PRICE + combined_output_tokens * OUTPUT_TOKEN_PRICE
 
-    data = CreateTagFilesDialogData(input_paths, total_tokens, combined_output_tokens, 0, total_price)
+    req_count = len(file_paths_sliced)
+    not_none_attr = len(attributes) - attributes.count(None)
+    attr_count = len(input_paths) * not_none_attr
+
+    data = CreateTagFilesDialogData(
+        input_paths, total_tokens, combined_output_tokens, 0, total_price,
+        req_count, attr_count
+    )
     global proceed_dialog
-    proceed_dialog = create_tag_files_dialog(data, lambda d: proceed_callback(database))
+    proceed_dialog = create_tag_files_dialog(data, lambda d: ctx.run_async(proceed_callback, database))
     proceed_dialog.show()
 
 

@@ -4,16 +4,23 @@ import typing
 import anchorpoint as ap
 import apsync as aps
 
+from ai.constants import OPENAI_REQUEST_TIME, ATTRIBUTE_UPDATE_TIME
+
 
 class CreateTagFilesDialogData:
     def __init__(
             self, input_paths: list[str], total_tokens: int, combined_output_tokens: int, pixel_count: int,
-            total_price: float):
+            total_price: float,
+            requests_count: int,
+            attribute_update_count: int,
+    ):
         self.input_paths = input_paths
         self.total_tokens = total_tokens
         self.combined_output_tokens = combined_output_tokens
         self.pixel_count = pixel_count
         self.total_price = total_price
+        self.requests_count = requests_count
+        self.attribute_update_count = attribute_update_count
 
 
 def create_tag_files_dialog(
@@ -29,8 +36,13 @@ def create_tag_files_dialog(
     else:
         costs = f"~${costs}"
 
+    estimated_time = data.requests_count * OPENAI_REQUEST_TIME + data.attribute_update_count * ATTRIBUTE_UPDATE_TIME
+
+    human_readable_time = f"{round(estimated_time // 3600):02d}:{round(estimated_time % 3600 // 60):02d}:{round(estimated_time % 60):02d}"
+
     costs_text = \
         f"Processing files: {len(data.input_paths)}" \
+        f"\nEstimated time: {human_readable_time}" \
         f"\nInput token count: {data.total_tokens}" \
         f"\nOutput token count: ~{data.combined_output_tokens}"
 

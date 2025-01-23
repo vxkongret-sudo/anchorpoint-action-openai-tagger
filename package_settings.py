@@ -1,4 +1,6 @@
 # This example demonstrates how to create a simple dialog in Anchorpoint
+import sys
+import tempfile
 from datetime import timedelta
 
 import anchorpoint as ap
@@ -6,6 +8,14 @@ import os
 
 from ai.api import check_usage
 from common.settings import tagger_settings
+
+APPDATA_PATH = os.getenv("APPDATA")
+
+
+def open_dir_callback(dir_path: str):
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+    os.startfile(dir_path)
 
 
 def delete_api_key_callback(dialog: ap.Dialog):
@@ -108,10 +118,13 @@ def main():
         openai_api_admin_key = tagger_settings.openai_api_admin_key
     except KeyError:
         openai_api_admin_key = ""
-    (dialog.add_input(
-        openai_api_admin_key, var="openai_api_admin_key", width=400,
-        placeholder="sk-admin-45jdh5k3kjdh5k3jh54kjh3...", password=True)
-     .add_button("Delete", callback=delete_admin_api_key_callback))
+    (
+        dialog
+        .add_input(
+            openai_api_admin_key, var="openai_api_admin_key", width=400,
+            placeholder="sk-admin-45jdh5k3kjdh5k3jh54kjh3...", password=True)
+        .add_button("Delete", callback=delete_admin_api_key_callback)
+    )
     dialog.add_info(
         "(Optional) Add the Admin key to be able to see your usage <br>"
         "Create an Admin API key on <a href='https://platform.openai.com/settings/organization/admin-keys'>"
@@ -127,6 +140,10 @@ def main():
     dialog.add_checkbox(tagger_settings.debug_log, var="debug_log", text="Enable Extended Logging")
     dialog.add_info("Log additional information to the console (open with CTRL+SHIFT+P)")
     dialog.add_separator()
+    previews_dir = os.path.join(tempfile.gettempdir(), "anchorpoint", "ai_tagger", "previews")
+    dialog.add_button("Open previews location", callback=lambda d: open_dir_callback(previews_dir))
+    previews_ap_dir = f"{APPDATA_PATH}\Anchorpoint Software\Anchorpoint\metadata"
+    dialog.add_button("Open AP previews location", callback=lambda d: open_dir_callback(previews_ap_dir))
     dialog.end_section()
 
     dialog.add_info(

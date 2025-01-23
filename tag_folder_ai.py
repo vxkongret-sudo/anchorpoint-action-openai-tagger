@@ -8,7 +8,7 @@ import apsync as aps
 import requests
 
 from ai.api import init_openai_key, OPENAI_API_URL
-from ai.constants import input_token_price, output_token_price
+from ai.constants import INPUT_TOKEN_PRICE, OUTPUT_TOKEN_PRICE
 from ai.response_schema import get_folder_properties, get_folder_response_format
 from ai.tokens import count_tokens
 from ap_tools.dialogs import CreateTagFoldersDialogData, create_tag_folders_dialog
@@ -73,12 +73,12 @@ def tag_folders(workspace_id: str, input_paths: list[str], database: aps.Api, at
             log(full_prompt)
             token_count = count_tokens(full_prompt)
             progress.report_progress(i / len(input_paths) + (3 / total_steps / len(input_paths)))
-            input_price = token_count * input_token_price
+            input_price = token_count * INPUT_TOKEN_PRICE
             folders.append((input_path, full_prompt, token_count, input_price))
 
     progress.finish()
     global proceed_dialog
-    data = CreateTagFoldersDialogData(folders, output_token_count, output_token_price)
+    data = CreateTagFoldersDialogData(folders, output_token_count, OUTPUT_TOKEN_PRICE)
     proceed_dialog = create_tag_folders_dialog(
         data,
         lambda d: proceed_callback(folders, workspace_id, database, attributes))
