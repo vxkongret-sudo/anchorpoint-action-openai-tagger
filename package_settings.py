@@ -6,7 +6,6 @@ from datetime import timedelta
 import anchorpoint as ap
 import os
 
-from ai.api import check_usage
 from common.settings import tagger_settings
 
 APPDATA_PATH = os.getenv("APPDATA")
@@ -19,32 +18,15 @@ def open_dir_callback(dir_path: str):
 
 
 def delete_api_key_callback(dialog: ap.Dialog):
-    tagger_settings.openai_api_key = ""
-    dialog.set_value("openai_api_key", "")
+    tagger_settings.anthropic_api_key = ""
+    dialog.set_value("anthropic_api_key", "")
     tagger_settings.store()
-
-
-def delete_admin_api_key_callback(dialog: ap.Dialog):
-    tagger_settings.openai_api_admin_key = ""
-    dialog.set_value("openai_api_admin_key", "")
-    tagger_settings.store()
-
-
-def check_usage_callback(dialog: ap.Dialog):
-    today = check_usage(timedelta(days=1))
-    dialog.set_value("usage_today", today)
-    value = check_usage(timedelta(days=7))
-    dialog.set_value("usage_week", value)
 
 
 def apply_callback(dialog: ap.Dialog):
-    openai_api_key = str(dialog.get_value("openai_api_key"))
+    anthropic_api_key = str(dialog.get_value("anthropic_api_key"))
 
-    tagger_settings.openai_api_key = openai_api_key
-
-    openai_api_admin_key = str(dialog.get_value("openai_api_admin_key"))
-
-    tagger_settings.openai_api_admin_key = openai_api_admin_key
+    tagger_settings.anthropic_api_key = anthropic_api_key
 
     tagger_settings.file_label_ai_types = bool(dialog.get_value("file_label_ai_types"))
     tagger_settings.file_label_ai_genres = bool(dialog.get_value("file_label_ai_genres"))
@@ -72,18 +54,18 @@ def main():
     if ctx.icon:
         dialog.icon = ctx.icon
 
-    dialog.add_text("<b>OpenAI API Key</b>")
+    dialog.add_text("<b>Anthropic API Key</b>")
 
     try:
-        openai_api_key = tagger_settings.openai_api_key
+        anthropic_api_key = tagger_settings.anthropic_api_key
     except KeyError:
-        openai_api_key = ""
+        anthropic_api_key = ""
 
     dialog.add_input(
-        openai_api_key, var="openai_api_key", width=400, placeholder="sk-proj-45jdh5k3kjdh5k3jh54kjh3...",
+        anthropic_api_key, var="anthropic_api_key", width=400, placeholder="sk-ant-api03-...",
         password=True).add_button("Delete", callback=delete_api_key_callback)
     dialog.add_info(
-        "An API key is an identifier (similar to username and password), that<br>allows you to access the AI-cloud services from OpenAI. Create an<br>API key on <a href='https://platform.openai.com/settings/organization/api-keys'>the Open AI website</a>. You will need to set up billing first.")
+        "An API key is an identifier (similar to username and password), that<br>allows you to access the AI-cloud services from Anthropic. Create an<br>API key on <a href='https://console.anthropic.com/settings/keys'>the Anthropic website</a>. You will need to set up billing first.")
 
     dialog.start_section("File Settings", folded=False)
     dialog.add_checkbox(tagger_settings.file_label_ai_types, var="file_label_ai_types", text="Label Types")
@@ -112,29 +94,6 @@ def main():
     dialog.add_separator()
     dialog.end_section()
 
-    dialog.start_section("Admin", folded=True)
-    dialog.add_text("<b>OpenAI Admin API Key</b>")
-    try:
-        openai_api_admin_key = tagger_settings.openai_api_admin_key
-    except KeyError:
-        openai_api_admin_key = ""
-    (
-        dialog
-        .add_input(
-            openai_api_admin_key, var="openai_api_admin_key", width=400,
-            placeholder="sk-admin-45jdh5k3kjdh5k3jh54kjh3...", password=True)
-        .add_button("Delete", callback=delete_admin_api_key_callback)
-    )
-    dialog.add_info(
-        "(Optional) Add the Admin key to be able to see your usage <br>"
-        "Create an Admin API key on <a href='https://platform.openai.com/settings/organization/admin-keys'>"
-        "the Open AI website</a>")
-    dialog.add_button("Check usage", callback=check_usage_callback)
-    dialog.add_text("Usage today:").add_text("---", var="usage_today")
-    dialog.add_text("Usage last 7 days:").add_text("---", var="usage_week")
-    dialog.add_separator()
-    dialog.end_section()
-
     debug_folded = not tagger_settings.debug_log
     dialog.start_section("Debugging", folded=debug_folded)
     dialog.add_checkbox(tagger_settings.debug_log, var="debug_log", text="Enable Extended Logging")
@@ -147,9 +106,9 @@ def main():
     dialog.end_section()
 
     dialog.add_info(
-        "Monitor your <a href='https://platform.openai.com/settings/organization/api-keys'>API keys</a> "
-        "and <a href='https://platform.openai.com/settings/organization/usage'>current spending</a> on the "
-        "OpenAI website. This<br> Action was created by <b>Hermesis Trismegistus</b>.If you like it, "
+        "Monitor your <a href='https://console.anthropic.com/settings/keys'>API keys</a> "
+        "and <a href='https://console.anthropic.com/settings/billing'>current spending</a> on the "
+        "Anthropic website. This<br> Action was created by <b>Hermesis Trismegistus</b>.If you like it, "
         "feel free to<br><a href='https://ko-fi.com/hermesistrismegistus'>make a donation.</a>")
 
     dialog.add_button("Apply", callback=apply_callback)

@@ -18,9 +18,6 @@ action:
   icon:
     path: icons/tagImage.svg
 
-  python_packages:
-  - tiktoken
-
   script: "tag_folder_ai.py"
   settings: "package_settings.py"
 

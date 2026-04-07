@@ -13,13 +13,12 @@ action:
   category: "ai"
   type: python
   author: "Hermesiss"
-  description: "Creates AI-based tags on selected files by uploading proxy files to OpenAI"
+  description: "Creates AI-based tags on selected files by uploading proxy files to Claude"
   enable: true
   icon:
     path: icons/tagImage.svg
 
   python_packages:
-  - tiktoken
   - pillow
 
   script: "tag_file_ai.py"

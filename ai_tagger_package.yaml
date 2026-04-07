@@ -7,7 +7,7 @@ version: "1.0"
 
 action:
   #Must Have Properties
-  name: "OpenAI file tagging"
+  name: "Claude AI file tagging"
 
   #Optional Properties
   version: 3
@@ -16,7 +16,7 @@ action:
   type: package
   enable: true
   author: "Hermesis Trismegistus"
-  description: Tag files by categories and objects with the help of OpenAI's GPT-4o mini. Requires an own API key.
+  description: Tag files by categories and objects with the help of Anthropic's Claude Haiku. Requires an own API key.
 
   settings: package_settings.py
 

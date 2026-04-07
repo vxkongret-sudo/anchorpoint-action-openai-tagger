@@ -7,9 +7,9 @@ import anchorpoint as ap
 import apsync as aps
 import requests
 
-from ai.api import init_openai_key, OPENAI_API_URL
-from ai.constants import INPUT_TOKEN_PRICE, OUTPUT_TOKEN_PRICE
-from ai.response_schema import get_folder_properties, get_folder_response_format
+from ai.api import init_anthropic_key, ANTHROPIC_API_URL, ANTHROPIC_API_VERSION, extract_json
+from ai.constants import INPUT_TOKEN_PRICE, OUTPUT_TOKEN_PRICE, DEFAULT_MODEL
+from ai.response_schema import get_folder_properties, get_folder_schema_prompt
 from ai.tokens import count_tokens
 from ap_tools.dialogs import CreateTagFoldersDialogData, create_tag_folders_dialog
 from common.logging import log, log_err
@@ -42,7 +42,7 @@ all_variants = {
 
 items = get_folder_properties()
 
-response_format = get_folder_response_format(items)
+schema_prompt = get_folder_schema_prompt(items)
 
 
 def get_folder_structure(input_path) -> dict[Any, list[Any]]:
@@ -102,46 +102,54 @@ def proceed_callback(
     ctx.run_async(run)
 
 
-OPENAI_API_KEY = init_openai_key()
+ANTHROPIC_API_KEY = init_anthropic_key()
 
 
-def get_openai_response(in_prompt, model="gpt-4o-mini") -> dict:
+def get_claude_response(in_prompt, model=DEFAULT_MODEL) -> dict:
     headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": ANTHROPIC_API_VERSION,
         "Content-Type": "application/json"
     }
 
     payload = {
         "model": model,
+        "max_tokens": 4096,
+        "system": "You are a folder tagging AI." + schema_prompt,
         "messages": [
-            {"role": "system", "content": "You are a folder tagging AI."},
             {"role": "user", "content": in_prompt}
         ],
-        "response_format": response_format
     }
 
     log(f"Body: {payload}")
 
     try:
-        response = requests.post(OPENAI_API_URL, headers=headers, json=payload)
+        response = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload)
         response.raise_for_status()
         result = response.json()
-        prompt_tokens = result["usage"]["prompt_tokens"]
-        completion_tokens = result["usage"]["completion_tokens"]
-        log(f"Prompt tokens: {prompt_tokens}, Completion tokens: {completion_tokens}")
-        result_content = result["choices"][0]["message"]["content"].strip()
+        log(f"Raw API response: {result}")
+        prompt_tokens = result["usage"]["input_tokens"]
+        completion_tokens = result["usage"]["output_tokens"]
+        log(f"Input tokens: {prompt_tokens}, Output tokens: {completion_tokens}")
+        result_content = extract_json(result["content"][0]["text"])
+        log(f"Extracted content: {result_content}")
         parsed = json.loads(result_content)
         return parsed["items"]
     except requests.exceptions.RequestException as e:
+        error_body = ""
+        if hasattr(e, 'response') and e.response is not None:
+            error_body = e.response.text
+        log_err(f"Request error: {e} {error_body}")
         return {"error": str(e)}
-    except KeyError:
-        return {"error": "Wrong response from OpenAI"}
+    except (KeyError, IndexError, json.JSONDecodeError) as e:
+        log_err(f"Response parse error: {e}")
+        return {"error": f"Wrong response from Claude: {e}"}
 
 
 def tag_folder(
         full_prompt: str, input_path: str, workspace_id: str, database: aps.Api,
         attributes: list[aps.Attribute]):
-    response = get_openai_response(full_prompt)
+    response = get_claude_response(full_prompt)
     log(response)
     if response.get("error"):
         err = f"Error while tagging folder: {response['error']}"

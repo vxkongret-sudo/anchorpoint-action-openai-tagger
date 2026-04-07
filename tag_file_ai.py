@@ -12,15 +12,15 @@ import hashlib
 
 import requests
 
-from ai.api import init_openai_key, OPENAI_API_URL
-from ai.response_schema import get_file_properties, get_file_response_format
+from ai.api import init_anthropic_key, ANTHROPIC_API_URL, ANTHROPIC_API_VERSION, extract_json
+from ai.response_schema import get_file_properties, get_file_schema_prompt
 from ap_tools.dialogs import CreateTagFilesDialogData, create_tag_files_dialog
 from common.logging import log, log_err
 from image.resize import resize_image
 from labels.attributes import ensure_attribute, replace_tag, check_or_update_attribute
 from labels.extensions import extensions_without_preview, filter_ignored_extensions
 from labels.variants import types_variants, genres_variants, objects_variants
-from ai.constants import INPUT_PIXEL_PRICE, INPUT_TOKEN_PRICE, OUTPUT_TOKEN_PRICE, MAX_RETRIES
+from ai.constants import IMAGE_TOKENS_ESTIMATE, INPUT_TOKEN_PRICE, OUTPUT_TOKEN_PRICE, MAX_RETRIES, DEFAULT_MODEL
 from ai.tokens import count_tokens
 from common.settings import tagger_settings
 
@@ -52,7 +52,7 @@ all_variants = {
 
 items = get_file_properties()
 
-response_format = get_file_response_format(items)
+schema_prompt = get_file_schema_prompt(items)
 
 
 def calculate_file_hash(file_path, hash_algorithm="sha256", length: int = 8):
@@ -121,10 +121,10 @@ def get_preview_image(workspace_id, input_path, output_folder):
     return image_path
 
 
-OPENAI_API_KEY = init_openai_key()
+ANTHROPIC_API_KEY = init_anthropic_key()
 
 
-def get_openai_response_images(in_prompt, image_paths: list[str], model="gpt-4o-mini") -> list[Any]:
+def get_claude_response_images(in_prompt, image_paths: list[str], model=DEFAULT_MODEL) -> list[Any]:
     if len(image_paths) == 0 or len(image_paths) > images_per_request:
         raise ValueError(f"The number of images should be between 1 and {images_per_request}")
 
@@ -137,42 +137,51 @@ def get_openai_response_images(in_prompt, image_paths: list[str], model="gpt-4o-
     }]
     for upload in uploads_base64:
         content.append({
-            "type": "image_url",
-            "image_url": {"url": f"data:image/jpeg;base64,{upload}"}
+            "type": "image",
+            "source": {
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": upload
+            }
         })
 
     headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": ANTHROPIC_API_VERSION,
         "Content-Type": "application/json"
     }
 
     payload = {
         "model": model,
+        "max_tokens": 4096,
+        "system": in_prompt + schema_prompt,
         "messages": [
-            {"role": "system", "content": in_prompt},
             {"role": "user", "content": content}
         ],
-        "response_format": response_format
     }
 
     log(f"Body: {payload}")
 
     try:
-        response = requests.post(OPENAI_API_URL, headers=headers, json=payload)
+        response = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload)
         response.raise_for_status()
         result = response.json()
+        log(f"Raw API response: {result}")
 
-        result_content = result["choices"][0]["message"]["content"].strip()
+        result_content = extract_json(result["content"][0]["text"])
+        log(f"Extracted content: {result_content}")
         parsed = json.loads(result_content)
         return parsed.get("tags", [])
     except requests.exceptions.RequestException as e:
         log_err(f"Request error: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            log_err(f"Response body: {e.response.text}")
         return []
-    except json.JSONDecodeError:
-        log_err("Failed to parse the response")
+    except json.JSONDecodeError as e:
+        log_err(f"Failed to parse the response: {e}")
         return []
-    except KeyError:
-        log_err("Wrong response from OpenAI")
+    except (KeyError, IndexError) as e:
+        log_err(f"Wrong response from Claude: {e}")
         return []
 
 
@@ -230,7 +239,7 @@ def proceed_callback(database):
             response = None
             while retries > 0:
                 retries -= 1
-                response = get_openai_response_images(prompt, p)
+                response = get_claude_response_images(prompt, p)
                 progress.report_progress((i + 1) / len(previews_sliced))
                 log(response)
                 if len(response) < len(p):
@@ -422,17 +431,17 @@ def process_images(input_paths, database):
     # slice previews by images_per_request
     previews_sliced = [previews[i:i + images_per_request] for i in range(0, len(previews), images_per_request)]
 
-    # calculate token count
-    pixel_price = pixel_count * INPUT_PIXEL_PRICE
+    # calculate token count (images are counted as tokens by Anthropic)
+    image_tokens = len(previews) * IMAGE_TOKENS_ESTIMATE
     log(f"Pixel count: {pixel_count}")
-    log(f"Pixel price: {pixel_price}")
+    log(f"Estimated image tokens: {image_tokens}")
     progress.finish()
-    token_prompts = count_tokens(prompt) * len(previews_sliced)
+    token_prompts = count_tokens(prompt + schema_prompt) * len(previews_sliced)
     token_count = count_tokens(", ".join(asset_names))
-    total_tokens = token_prompts + token_count
+    total_tokens = token_prompts + token_count + image_tokens
     combined_output_tokens = len(previews_sliced) * output_token_count
 
-    total_price = total_tokens * INPUT_TOKEN_PRICE + pixel_price + combined_output_tokens * OUTPUT_TOKEN_PRICE
+    total_price = total_tokens * INPUT_TOKEN_PRICE + combined_output_tokens * OUTPUT_TOKEN_PRICE
 
     req_count = len(previews_sliced)
     not_none_attr = len(attributes) - attributes.count(None)

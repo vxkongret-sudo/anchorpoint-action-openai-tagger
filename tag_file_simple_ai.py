@@ -8,9 +8,9 @@ import anchorpoint as ap
 import apsync as aps
 import requests
 
-from ai.api import init_openai_key, OPENAI_API_URL
-from ai.constants import INPUT_TOKEN_PRICE, OUTPUT_TOKEN_PRICE, MAX_RETRIES
-from ai.response_schema import get_file_properties, get_file_response_format
+from ai.api import init_anthropic_key, ANTHROPIC_API_URL, ANTHROPIC_API_VERSION, extract_json
+from ai.constants import INPUT_TOKEN_PRICE, OUTPUT_TOKEN_PRICE, MAX_RETRIES, DEFAULT_MODEL
+from ai.response_schema import get_file_properties, get_file_schema_prompt
 from ai.tokens import count_tokens
 from ap_tools.dialogs import CreateTagFilesDialogData, create_tag_files_dialog
 from common.logging import log, log_err
@@ -51,7 +51,7 @@ all_variants = {
 
 items = get_file_properties()
 
-response_format = get_file_response_format(items)
+schema_prompt = get_file_schema_prompt(items)
 
 
 def calculate_file_hash(file_path, hash_algorithm="sha256", length: int = 8):
@@ -64,52 +64,52 @@ def calculate_file_hash(file_path, hash_algorithm="sha256", length: int = 8):
     return hash_func.hexdigest()[:length]
 
 
-OPENAI_API_KEY = init_openai_key()
+ANTHROPIC_API_KEY = init_anthropic_key()
 
 
-def get_openai_response_files(in_prompt, file_paths: list[str], model="gpt-4o-mini") -> list[Any]:
+def get_claude_response_files(in_prompt, file_paths: list[str], model=DEFAULT_MODEL) -> list[Any]:
     if len(file_paths) == 0 or len(file_paths) > files_per_request:
         raise ValueError(f"The number of files should be between 1 and {files_per_request}")
 
     original_file_names = [os.path.basename(file_path) for file_path in file_paths]
 
-    content = [{
-        "type": "text",
-        "text": "Please tag these files: " + ", ".join(original_file_names)
-    }]
-
     headers = {
-        "Authorization": f"Bearer {OPENAI_API_KEY}",
+        "x-api-key": ANTHROPIC_API_KEY,
+        "anthropic-version": ANTHROPIC_API_VERSION,
         "Content-Type": "application/json"
     }
 
     payload = {
         "model": model,
+        "max_tokens": 4096,
+        "system": in_prompt + schema_prompt,
         "messages": [
-            {"role": "system", "content": in_prompt},
-            {"role": "user", "content": content}
+            {"role": "user", "content": "Please tag these files: " + ", ".join(original_file_names)}
         ],
-        "response_format": response_format
     }
 
     log(f"Body: {payload}")
 
     try:
-        response = requests.post(OPENAI_API_URL, headers=headers, json=payload)
+        response = requests.post(ANTHROPIC_API_URL, headers=headers, json=payload)
         response.raise_for_status()
         result = response.json()
+        log(f"Raw API response: {result}")
 
-        result_content = result["choices"][0]["message"]["content"].strip()
+        result_content = extract_json(result["content"][0]["text"])
+        log(f"Extracted content: {result_content}")
         parsed = json.loads(result_content)
         return parsed.get("tags", [])
     except requests.exceptions.RequestException as e:
         log_err(f"Request error: {e}")
+        if hasattr(e, 'response') and e.response is not None:
+            log_err(f"Response body: {e.response.text}")
         return []
-    except json.JSONDecodeError:
-        log_err("Failed to parse the response")
+    except json.JSONDecodeError as e:
+        log_err(f"Failed to parse the response: {e}")
         return []
-    except KeyError:
-        log_err("Wrong response from OpenAI")
+    except (KeyError, IndexError) as e:
+        log_err(f"Wrong response from Claude: {e}")
         return []
 
 
@@ -168,7 +168,7 @@ def proceed_callback(database):
         response = []
         while retries > 0:
             retries -= 1
-            response = get_openai_response_files(prompt, p)
+            response = get_claude_response_files(prompt, p)
             progress.report_progress((i + 1) / len(file_paths_sliced))
             log(response)
             if len(response) < len(p):
@@ -291,13 +291,13 @@ def main():
 
 def process_files(input_paths, database):
     global file_paths_sliced
-    # slice file paths by images_per_request
+    # slice file paths by files_per_request
     file_paths_sliced = [input_paths[i:i + files_per_request] for i in range(0, len(input_paths), files_per_request)]
 
     # calculate token count
     input_paths_base_names = [os.path.basename(file_path) for file_path in input_paths]
     log(input_paths_base_names)
-    token_prompts = count_tokens(prompt) * len(file_paths_sliced)
+    token_prompts = count_tokens(prompt + schema_prompt) * len(file_paths_sliced)
     token_count = count_tokens(", ".join(input_paths_base_names))
     total_tokens = token_prompts + token_count
     combined_output_tokens = len(file_paths_sliced) * output_token_count

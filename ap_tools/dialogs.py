@@ -4,7 +4,7 @@ import typing
 import anchorpoint as ap
 import apsync as aps
 
-from ai.constants import OPENAI_REQUEST_TIME, ATTRIBUTE_UPDATE_TIME
+from ai.constants import CLAUDE_REQUEST_TIME, ATTRIBUTE_UPDATE_TIME
 
 
 class CreateTagFilesDialogData:
@@ -36,7 +36,7 @@ def create_tag_files_dialog(
     else:
         costs = f"~${costs}"
 
-    estimated_time = data.requests_count * OPENAI_REQUEST_TIME + data.attribute_update_count * ATTRIBUTE_UPDATE_TIME
+    estimated_time = data.requests_count * CLAUDE_REQUEST_TIME + data.attribute_update_count * ATTRIBUTE_UPDATE_TIME
 
     human_readable_time = f"{round(estimated_time // 3600):02d}:{round(estimated_time % 3600 // 60):02d}:{round(estimated_time % 60):02d}"
 
