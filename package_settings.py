@@ -28,6 +28,8 @@ def apply_callback(dialog: ap.Dialog):
 
     tagger_settings.anthropic_api_key = anthropic_api_key
 
+    tagger_settings.naming_rules_file = str(dialog.get_value("naming_rules_file"))
+
     tagger_settings.file_label_ai_types = bool(dialog.get_value("file_label_ai_types"))
     tagger_settings.file_label_ai_genres = bool(dialog.get_value("file_label_ai_genres"))
     tagger_settings.file_label_ai_objects = bool(dialog.get_value("file_label_ai_objects"))
@@ -66,6 +68,28 @@ def main():
         password=True).add_button("Delete", callback=delete_api_key_callback)
     dialog.add_info(
         "An API key is an identifier (similar to username and password), that<br>allows you to access the AI-cloud services from Anthropic. Create an<br>API key on <a href='https://console.anthropic.com/settings/keys'>the Anthropic website</a>. You will need to set up billing first.")
+
+    dialog.start_section("Naming Convention Rules", folded=False)
+    dialog.add_text("<b>Rules File Path</b>")
+    try:
+        naming_rules_file = tagger_settings.naming_rules_file
+    except KeyError:
+        naming_rules_file = ""
+    dialog.add_input(
+        naming_rules_file, var="naming_rules_file", width=400,
+        placeholder="H:\\MyProject\\tagging_rules.md")
+    rules_content = tagger_settings.get_naming_rules()
+    if rules_content:
+        line_count = len(rules_content.strip().splitlines())
+        dialog.add_info(f"Rules file loaded: {line_count} lines")
+    else:
+        dialog.add_info("No rules file set, or file not found. Tagging will use default AI behavior.")
+    dialog.add_info(
+        "Point to a text/markdown file with your naming convention rules.<br>"
+        "The AI will follow these rules when tagging files and folders.<br>"
+        "Example: prefix meanings, character names, folder-to-tag mappings.")
+    dialog.add_separator()
+    dialog.end_section()
 
     dialog.start_section("File Settings", folded=False)
     dialog.add_checkbox(tagger_settings.file_label_ai_types, var="file_label_ai_types", text="Label Types")

@@ -30,6 +30,10 @@ if tagger_settings.folder_use_ai_genres:
 
 prompt += "fill all tags"
 
+naming_rules = tagger_settings.get_naming_rules()
+if naming_rules:
+    prompt += "\n\nCustom naming convention rules:\n" + naming_rules
+
 output_token_count = 200
 
 proceed_dialog: ap.Dialog

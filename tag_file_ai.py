@@ -37,7 +37,11 @@ if tagger_settings.file_label_ai_genres:
 if tagger_settings.file_label_ai_objects:
     prompt += f"objects and other keywords in the image (min {tagger_settings.file_label_ai_objects_min}, max {tagger_settings.file_label_ai_objects_max}), "
 
-prompt += "fill all tags for each image. Use Capitalized Words"
+prompt += "fill all tags for each image. Use Capitalized Words. IMPORTANT: Never repeat the same tag across different categories — each tag value must appear only once total."
+
+naming_rules = tagger_settings.get_naming_rules()
+if naming_rules:
+    prompt += "\n\nCustom naming convention rules:\n" + naming_rules
 
 output_token_count = 200
 
@@ -129,11 +133,14 @@ def get_claude_response_images(in_prompt, image_paths: list[str], model=DEFAULT_
         raise ValueError(f"The number of images should be between 1 and {images_per_request}")
 
     uploads_base64 = [encode_image(image_path) for image_path in image_paths]
-    original_file_names = [os.path.basename(image_path) for image_path in image_paths]
+    from common.filename import clean_character_filename
+    # Send full original paths so the AI can use folder structure for tagging
+    # Preprocess Ch_ filenames to strip animation states
+    original_file_paths = [clean_character_filename(original_files.get(p, p)).replace("\\", "/") for p in image_paths]
 
     content = [{
         "type": "text",
-        "text": "Please tag these images: " + ", ".join(original_file_names)
+        "text": "Please tag these images (use both the filename and folder path for context):\n" + "\n".join(original_file_paths)
     }]
     for upload in uploads_base64:
         content.append({
@@ -233,7 +240,7 @@ def proceed_callback(database):
         for i, p in enumerate(previews_sliced):
             if progress.canceled:
                 progress.finish()
-                ap.UI().navigate_to_folder(initial_folder)
+                # ap.UI().navigate_to_folder(initial_folder)
                 return
             retries = MAX_RETRIES
             response = None
@@ -243,7 +250,7 @@ def proceed_callback(database):
                 progress.report_progress((i + 1) / len(previews_sliced))
                 log(response)
                 if len(response) < len(p):
-                    ap.UI().navigate_to_folder(initial_folder)
+                    # ap.UI().navigate_to_folder(initial_folder)
                     ap.UI().show_error(
                         "Error",
                         f"Not all images were tagged [Received {len(response)}, requested {len(p)}], retrying {retries} more times")
@@ -253,7 +260,7 @@ def proceed_callback(database):
                 break
 
             if retries <= 0:
-                ap.UI().navigate_to_folder(initial_folder)
+                # ap.UI().navigate_to_folder(initial_folder)
                 ap.UI().show_error(
                     "Error", f"Not all files were tagged after {MAX_RETRIES} retries, aborting")
                 return
@@ -263,8 +270,8 @@ def proceed_callback(database):
                 progress2.report_progress(j / len(p))
                 tags = response[j]
 
-                # ap.UI().navigate_to_folder(os.path.dirname(original_files[p[j]]))
-                ap.UI().navigate_to_file(original_files[p[j]])
+                # Track all used tags to prevent duplicates across categories
+                seen_tags = set()
 
                 if tagger_settings.file_label_ai_types:
                     types = tags["types"]
@@ -273,6 +280,9 @@ def proceed_callback(database):
                     types_tags = aps.AttributeTagList()
                     for k, tag in enumerate(types):
                         types[k] = replace_tag(tag, all_variants["AI-Types"])
+                        if types[k].lower() in seen_tags:
+                            continue
+                        seen_tags.add(types[k].lower())
                         new_tag = check_or_update_attribute(attributes[0], types[k], database)
                         types_tags.append(new_tag)
 
@@ -286,6 +296,9 @@ def proceed_callback(database):
 
                     for k, tag in enumerate(genres):
                         genres[k] = replace_tag(tag, all_variants["AI-Genres"])
+                        if genres[k].lower() in seen_tags:
+                            continue
+                        seen_tags.add(genres[k].lower())
                         new_tag = check_or_update_attribute(attributes[1], genres[k], database)
                         genres_tags.append(new_tag)
 
@@ -296,6 +309,9 @@ def proceed_callback(database):
                     objects_tags = aps.AttributeTagList()
                     for k, tag in enumerate(objects):
                         objects[k] = replace_tag(tag, all_variants["AI-Objects"])
+                        if objects[k].lower() in seen_tags:
+                            continue
+                        seen_tags.add(objects[k].lower())
                         new_tag = check_or_update_attribute(attributes[2], objects[k], database)
                         objects_tags.append(new_tag)
 
@@ -305,7 +321,7 @@ def proceed_callback(database):
         progress.finish()
         finish_time = datetime.now()
         log(f"Finished tagging in {finish_time - start_time}")
-        ap.UI().navigate_to_folder(initial_folder)
+        # ap.UI().navigate_to_folder(initial_folder)
 
     ctx.run_async(run)
 
@@ -342,7 +358,7 @@ def proceed_generating_previews(workspace_id, database, output_folder):
 
 def generate_previews(workspace_id, input_paths, database):
     if len(input_paths) == 0:
-        ap.UI().navigate_to_folder(initial_folder)
+        # ap.UI().navigate_to_folder(initial_folder)
         ap.UI().show_error("No supported files selected", "Please select files to tag")
         log_err("No supported files selected")
         return
@@ -391,7 +407,7 @@ def generate_preview_async(workspace_id, input_path, output_folder, database):
     if generating_previews_progress.canceled:
         cancel_generating_previews = True
         generating_previews_progress.finish()
-        ap.UI().navigate_to_folder(initial_folder)
+        # ap.UI().navigate_to_folder(initial_folder)
         return
 
     generating_previews_progress.report_progress(generating_previews_count / len(file_input_paths))
@@ -406,7 +422,7 @@ def finish_generating_previews(input_paths, database):
     current_time = datetime.now()
     log(f"Generated {len(input_paths)} previews in {current_time - previews_start_time}")
     if len(input_paths) == 0:
-        ap.UI().navigate_to_folder(initial_folder)
+        # ap.UI().navigate_to_folder(initial_folder)
         ap.UI().show_error("No supported files selected", "Please select files to tag")
         log_err("No supported files selected")
         return

@@ -1,3 +1,5 @@
+import os
+
 import apsync as aps
 
 class TaggerSettings:
@@ -12,6 +14,7 @@ class TaggerSettings:
         self.local_settings.set(key, value)
 
     anthropic_api_key: str
+    naming_rules_file: str
     file_label_ai_types: bool
     file_label_ai_genres: bool
     file_label_ai_objects: bool
@@ -22,6 +25,16 @@ class TaggerSettings:
     folder_use_ai_genres: bool
     debug_log: bool
 
+    def get_naming_rules(self) -> str:
+        """Read naming rules from the file path, if set and valid."""
+        if not self.naming_rules_file or not os.path.isfile(self.naming_rules_file):
+            return ""
+        try:
+            with open(self.naming_rules_file, "r", encoding="utf-8") as f:
+                return f.read()
+        except Exception:
+            return ""
+
     def any_file_tags_selected(self):
         return self.file_label_ai_types or self.file_label_ai_genres or self.file_label_ai_objects
 
@@ -30,6 +43,7 @@ class TaggerSettings:
 
     def load(self):
         self.anthropic_api_key = str(self.get("anthropic_api_key"))
+        self.naming_rules_file = str(self.get("naming_rules_file"))
         self.file_label_ai_types = bool(self.get("file_label_ai_types", True))
         self.file_label_ai_genres = bool(self.get("file_label_ai_genres", True))
         self.file_label_ai_objects = bool(self.get("file_label_ai_objects", True))
@@ -42,6 +56,7 @@ class TaggerSettings:
 
     def store(self):
         self.set("anthropic_api_key", self.anthropic_api_key)
+        self.set("naming_rules_file", self.naming_rules_file)
         self.set("file_label_ai_types", self.file_label_ai_types)
         self.set("file_label_ai_genres", self.file_label_ai_genres)
         self.set("file_label_ai_objects", self.file_label_ai_objects)

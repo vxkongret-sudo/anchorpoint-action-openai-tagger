@@ -32,7 +32,11 @@ if tagger_settings.file_label_ai_genres:
 if tagger_settings.file_label_ai_objects:
     prompt += f"objects and other keywords (min {tagger_settings.file_label_ai_objects_min}, max {tagger_settings.file_label_ai_objects_max}), "
 
-prompt += "fill all tags for each file. Use Capitalized Words"
+prompt += "fill all tags for each file. Use Capitalized Words. IMPORTANT: Never repeat the same tag across different categories — each tag value must appear only once total."
+
+naming_rules = tagger_settings.get_naming_rules()
+if naming_rules:
+    prompt += "\n\nCustom naming convention rules:\n" + naming_rules
 
 ctx: Optional[ap.Context] = None
 start_time = datetime.now()
@@ -71,7 +75,10 @@ def get_claude_response_files(in_prompt, file_paths: list[str], model=DEFAULT_MO
     if len(file_paths) == 0 or len(file_paths) > files_per_request:
         raise ValueError(f"The number of files should be between 1 and {files_per_request}")
 
-    original_file_names = [os.path.basename(file_path) for file_path in file_paths]
+    from common.filename import clean_character_filename
+    # Send full paths so the AI can use folder structure for tagging
+    # Preprocess Ch_ filenames to strip animation states
+    file_descriptions = [clean_character_filename(file_path).replace("\\", "/") for file_path in file_paths]
 
     headers = {
         "x-api-key": ANTHROPIC_API_KEY,
@@ -84,7 +91,7 @@ def get_claude_response_files(in_prompt, file_paths: list[str], model=DEFAULT_MO
         "max_tokens": 4096,
         "system": in_prompt + schema_prompt,
         "messages": [
-            {"role": "user", "content": "Please tag these files: " + ", ".join(original_file_names)}
+            {"role": "user", "content": "Please tag these files (use both the filename and folder path for context):\n" + "\n".join(file_descriptions)}
         ],
     }
 
@@ -162,7 +169,7 @@ def proceed_callback(database):
     for i, p in enumerate(file_paths_sliced):
         if progress.canceled:
             progress.finish()
-            ap.UI().navigate_to_folder(initial_folder)
+            # ap.UI().navigate_to_folder(initial_folder)
             return
         retries = MAX_RETRIES
         response = []
@@ -181,7 +188,7 @@ def proceed_callback(database):
             break
 
         if retries <= 0:
-            ap.UI().navigate_to_folder(initial_folder)
+            # ap.UI().navigate_to_folder(initial_folder)
             ap.UI().show_error(
                 "Error", f"Not all files were tagged after {MAX_RETRIES} retries, aborting")
             return
@@ -192,7 +199,8 @@ def proceed_callback(database):
             progress2.report_progress(j / len(p))
             tags = response[j]
 
-            ap.UI().navigate_to_file(file_path)
+            # Track all used tags to prevent duplicates across categories
+            seen_tags = set()
 
             if tagger_settings.file_label_ai_types:
                 types = tags["types"]
@@ -201,6 +209,9 @@ def proceed_callback(database):
                 types_tags = aps.AttributeTagList()
                 for k, tag in enumerate(types):
                     types[k] = replace_tag(tag, all_variants["AI-Types"])
+                    if types[k].lower() in seen_tags:
+                        continue
+                    seen_tags.add(types[k].lower())
                     new_tag = check_or_update_attribute(attributes[0], types[k], database)
                     types_tags.append(new_tag)
 
@@ -214,6 +225,9 @@ def proceed_callback(database):
 
                 for k, tag in enumerate(genres):
                     genres[k] = replace_tag(tag, all_variants["AI-Genres"])
+                    if genres[k].lower() in seen_tags:
+                        continue
+                    seen_tags.add(genres[k].lower())
                     new_tag = check_or_update_attribute(attributes[1], genres[k], database)
                     genres_tags.append(new_tag)
 
@@ -224,6 +238,9 @@ def proceed_callback(database):
                 objects_tags = aps.AttributeTagList()
                 for k, tag in enumerate(objects):
                     objects[k] = replace_tag(tag, all_variants["AI-Objects"])
+                    if objects[k].lower() in seen_tags:
+                        continue
+                    seen_tags.add(objects[k].lower())
                     new_tag = check_or_update_attribute(attributes[2], objects[k], database)
                     objects_tags.append(new_tag)
 
@@ -233,7 +250,7 @@ def proceed_callback(database):
     progress.finish()
     finish_time = datetime.now()
     log(f"Finished tagging in {finish_time - start_time}")
-    ap.UI().navigate_to_folder(initial_folder)
+    # ap.UI().navigate_to_folder(initial_folder)
 
 
 file_paths_sliced = []
