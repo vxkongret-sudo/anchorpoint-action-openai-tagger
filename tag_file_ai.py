@@ -132,7 +132,7 @@ def get_claude_response_images(in_prompt, image_paths: list[str], model=DEFAULT_
     if len(image_paths) == 0 or len(image_paths) > images_per_request:
         raise ValueError(f"The number of images should be between 1 and {images_per_request}")
 
-    uploads_base64 = [encode_image(image_path) for image_path in image_paths]
+    uploads = [(encode_image(image_path), "image/png" if image_path.lower().endswith(".png") else "image/jpeg") for image_path in image_paths]
     from common.filename import clean_character_filename
     # Send full original paths so the AI can use folder structure for tagging
     # Preprocess Ch_ filenames to strip animation states
@@ -142,13 +142,13 @@ def get_claude_response_images(in_prompt, image_paths: list[str], model=DEFAULT_
         "type": "text",
         "text": "Please tag these images (use both the filename and folder path for context):\n" + "\n".join(original_file_paths)
     }]
-    for upload in uploads_base64:
+    for data, media_type in uploads:
         content.append({
             "type": "image",
             "source": {
                 "type": "base64",
-                "media_type": "image/jpeg",
-                "data": upload
+                "media_type": media_type,
+                "data": data
             }
         })
 
@@ -381,7 +381,6 @@ def generate_previews(workspace_id, input_paths, database):
     global file_input_paths
     file_input_paths = input_paths
     log("Output folder: {}".format(output_folder.replace("\\", "\\\\")))
-    proceed_generating_previews(workspace_id, database, output_folder)
     # start generating first 10 previews
     for i in range(min(images_per_request, len(input_paths))):
         input_path = input_paths[i]
