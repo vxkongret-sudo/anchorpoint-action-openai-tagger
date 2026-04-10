@@ -203,7 +203,7 @@ def proceed_callback(database):
             seen_tags = set()
 
             if tagger_settings.file_label_ai_types:
-                types = tags["types"]
+                types = tags.get("types", [])
                 if "types_additional" in tags:
                     types += tags["types_additional"]
                 types_tags = aps.AttributeTagList()
@@ -218,7 +218,7 @@ def proceed_callback(database):
                 database.attributes.set_attribute_value(file_path, "AI-Types", types_tags)
 
             if tagger_settings.file_label_ai_genres:
-                genres = tags["genres"]
+                genres = tags.get("genres", [])
                 if "genres_additional" in tags:
                     genres += tags["genres_additional"]
                 genres_tags = aps.AttributeTagList()
@@ -234,7 +234,7 @@ def proceed_callback(database):
                 database.attributes.set_attribute_value(file_path, "AI-Genres", genres_tags)
 
             if tagger_settings.file_label_ai_objects:
-                objects = tags["objects"]
+                objects = tags.get("objects", [])
                 objects_tags = aps.AttributeTagList()
                 for k, tag in enumerate(objects):
                     objects[k] = replace_tag(tag, all_variants["AI-Objects"])

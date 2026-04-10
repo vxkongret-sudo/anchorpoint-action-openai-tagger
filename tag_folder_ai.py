@@ -162,9 +162,9 @@ def tag_folder(
         return
 
     tags = [
-        response["engines"] if tagger_settings.folder_use_ai_engines else None,
-        (response["types"] + response["types_additional"]) if tagger_settings.folder_use_ai_types else None,
-        (response["genres"] + response["genres_additional"]) if tagger_settings.folder_use_ai_genres else None
+        response.get("engines", []) if tagger_settings.folder_use_ai_engines else None,
+        (response.get("types", []) + response.get("types_additional", [])) if tagger_settings.folder_use_ai_types else None,
+        (response.get("genres", []) + response.get("genres_additional", [])) if tagger_settings.folder_use_ai_genres else None
     ]
 
     if len(tags) != len(attributes):
