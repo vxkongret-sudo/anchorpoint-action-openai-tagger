@@ -21,7 +21,7 @@ action:
   settings: package_settings.py
 
   icon:
-    path: "icons/haiku-logo.svg"
+    path: "icons/haiku-logo.jpg"
 
   actions:
     - ap::haiku_rename::folder
