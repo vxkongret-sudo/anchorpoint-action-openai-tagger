@@ -17,22 +17,30 @@ from common.settings import tagger_settings
 from labels.attributes import ensure_attribute, replace_tag, attribute_colors
 from labels.variants import engines_variants, types_variants, genres_variants
 
-prompt = "Write tags for the folder:"
+prompt = ""
+schema_prompt = ""
 
-if tagger_settings.folder_use_ai_engines:
-    prompt += "required game engines (e.g. UE if it has *.uasset or Unity if it has *.unitypackage) or 'Any' if assets have common types, "
 
-if tagger_settings.folder_use_ai_types:
-    prompt += "content types (Texture, Sprite, Model, VFX, SFX, etc.) (min 1), "
+def build_prompts() -> tuple[str, str]:
+    """Build the system prompt and JSON schema prompt from current settings.
+    Called at the start of each invocation so that Settings changes take effect
+    without restarting Anchorpoint."""
+    p = "Write tags for the folder:"
+    if tagger_settings.folder_use_ai_engines:
+        p += "required game engines (e.g. UE if it has *.uasset or Unity if it has *.unitypackage) or 'Any' if assets have common types, "
+    if tagger_settings.folder_use_ai_types:
+        p += "content types (Texture, Sprite, Model, VFX, SFX, etc.) (min 1), "
+    if tagger_settings.folder_use_ai_genres:
+        p += "detailed genres (min 1), "
+    p += "fill all tags"
 
-if tagger_settings.folder_use_ai_genres:
-    prompt += "detailed genres (min 1), "
+    rules = tagger_settings.get_naming_rules()
+    if rules:
+        p += "\n\nCustom naming convention rules:\n" + rules
 
-prompt += "fill all tags"
+    sp = get_folder_schema_prompt(get_folder_properties())
+    return p, sp
 
-naming_rules = tagger_settings.get_naming_rules()
-if naming_rules:
-    prompt += "\n\nCustom naming convention rules:\n" + naming_rules
 
 output_token_count = 200
 
@@ -43,10 +51,6 @@ all_variants = {
     "AI-Types": types_variants,
     "AI-Genres": genres_variants,
 }
-
-items = get_folder_properties()
-
-schema_prompt = get_folder_schema_prompt(items)
 
 
 def get_folder_structure(input_path) -> dict[Any, list[Any]]:
@@ -106,12 +110,9 @@ def proceed_callback(
     ctx.run_async(run)
 
 
-ANTHROPIC_API_KEY = init_anthropic_key()
-
-
 def get_claude_response(in_prompt, model=DEFAULT_MODEL) -> dict:
     headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
+        "x-api-key": init_anthropic_key(),
         "anthropic-version": ANTHROPIC_API_VERSION,
         "Content-Type": "application/json"
     }
@@ -173,30 +174,27 @@ def tag_folder(
         log_err(err)
         return
 
-    for i, tag in enumerate(tags):
-        if not tag:
+    for i, category_tags in enumerate(tags):
+        if not category_tags:
             continue
 
         attribute = attributes[i]
         anchorpoint_tags = attribute.tags
-
         colors = attribute_colors
 
-        # Create a set of anchorpoint tag names for faster lookup
-        anchorpoint_tag_names = {tag.name for tag in anchorpoint_tags}
+        # Names of tags already present in the attribute's vocabulary
+        existing_tag_names = {a_tag.name for a_tag in anchorpoint_tags}
 
-        # Add new tags from image_tags that are not already in anchorpoint_tag_names
-        folder_tags = tag
+        # Canonicalize each raw tag via the variant table and dedup
         replaced_tags = []
+        for raw_tag in category_tags:
+            canonical = replace_tag(raw_tag.strip(), all_variants[attribute.name])
+            if canonical and canonical not in replaced_tags:
+                replaced_tags.append(canonical)
 
-        for folder_tag in folder_tags:
-            tag = replace_tag(folder_tag.strip(), all_variants[attribute.name])
-            if not tag in replaced_tags:
-                replaced_tags.append(tag)
-
+        # Extend the attribute's vocabulary with any new canonical tags
         for folder_tag in replaced_tags:
-            folder_tag = folder_tag
-            if folder_tag not in anchorpoint_tag_names:
+            if folder_tag not in existing_tag_names:
                 new_tag = aps.AttributeTag(folder_tag, random.choice(colors))
                 anchorpoint_tags.append(new_tag)
 
@@ -208,14 +206,19 @@ def tag_folder(
             if anchorpoint_tag.name in replaced_tags:
                 ao_tags.append(anchorpoint_tag)
 
-        # Set the attribute value for the input path
-        database.attributes.set_attribute_value(input_path, attribute, ao_tags)
+        # Set the attribute value for the input path (skip empty to avoid
+        # wiping existing tags when the AI returns nothing for this category)
+        if len(ao_tags) > 0:
+            database.attributes.set_attribute_value(input_path, attribute, ao_tags)
 
 
 def main():
     if not tagger_settings.any_folder_tags_selected():
         ap.UI().show_error("No tags selected", "Please select at least one tag category in the settings")
         return
+
+    global prompt, schema_prompt
+    prompt, schema_prompt = build_prompts()
 
     ctx = ap.get_context()
     database = ap.get_api()

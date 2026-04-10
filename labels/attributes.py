@@ -16,12 +16,16 @@ def ensure_attribute(database: aps.Api, attribute_name: str) -> aps.Attribute:
     return attribute
 
 def replace_tag(tag: str, variants: list[list[str]]) -> str:
-    """Replace a tag with a variant if it exists"""
+    """Replace a tag with its canonical variant if any variant list contains
+    it (case-insensitive). Returns the first entry of the matching variant
+    list, which is treated as the canonical form."""
     if not variants:
         return tag
+    tag_lower = tag.lower()
     for variant in variants:
-        if tag in variant:
-            return variant[0]
+        for candidate in variant:
+            if candidate.lower() == tag_lower:
+                return variant[0]
 
     return tag
 

@@ -125,7 +125,7 @@ def main():
     dialog.add_separator()
     previews_dir = os.path.join(tempfile.gettempdir(), "anchorpoint", "ai_tagger", "previews")
     dialog.add_button("Open previews location", callback=lambda d: open_dir_callback(previews_dir))
-    previews_ap_dir = f"{APPDATA_PATH}\Anchorpoint Software\Anchorpoint\metadata"
+    previews_ap_dir = rf"{APPDATA_PATH}\Anchorpoint Software\Anchorpoint\metadata"
     dialog.add_button("Open AP previews location", callback=lambda d: open_dir_callback(previews_ap_dir))
     dialog.end_section()
 

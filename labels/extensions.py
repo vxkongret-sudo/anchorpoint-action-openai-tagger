@@ -21,7 +21,7 @@ godot_extensions = [
     "tscn", "tres", "import", "scn", "res", "gd", "gdc", "gdscript", "gdn", "cfg", "json", "gdns"
 ]
 
-engines = unity_extensions + unreal_extensions + roblox_extensions + godot_extensions + roblox_extensions
+engines = unity_extensions + unreal_extensions + roblox_extensions + godot_extensions
 
 temp_extensions = [
     "tmp", "temp", "bak", "backup", "old", "cache", "log", "lock", "swp", "dmp", "err"
@@ -52,35 +52,56 @@ code_project_extensions = [
     "sln", "csproj", "vcxproj", "xcodeproj", "makefile", "cmake", "gradle",
 ]
 
-extensions_without_preview = engines + [
-    temp_extensions, audio_extensions,
-    text_extensions, archive_extensions, script_extensions,
-    data_extensions, code_project_extensions
-]
+extensions_without_preview = (
+    engines
+    + temp_extensions
+    + audio_extensions
+    + text_extensions
+    + archive_extensions
+    + script_extensions
+    + data_extensions
+    + code_project_extensions
+)
 
 junk_files_extensions = temp_extensions + archive_extensions + [
     "meta", "import", "orig", "rej", "undo", "redo", "autosave", "autosaved", "restore",
-    "save", "sav", "swp", "log1", "log2", "journal", "pid", "gz", "tgz", "zst", "xz",
+    "save", "sav", "log1", "log2", "journal", "pid", "tgz", "zst",
     "bak1", "bak2", "tmp1", "tmp2", "old1", "old2", "cache1", "cache2",
-    "icns", "ico", "DS_Store", "Thumbs.db", "desktop.ini", "crash", "trace", "out",
+    "icns", "ico", "crash", "trace", "out",
     "aux", "bak~", "part", "crdownload", "download", "working", "gitkeep", "gitattributes",
     "lockfile", "npmignore", "editorconfig", "eslintignore", "prettierrc", "eslintrc"
 ]
 
+# Full-filename matches (case-insensitive) for system junk that isn't cleanly
+# a single extension. These catch things like .DS_Store / Thumbs.db / desktop.ini
+# without over-filtering real .db or .ini files.
+_junk_filenames = {
+    ".ds_store",
+    "thumbs.db",
+    "desktop.ini",
+}
 
-def filter_ignored_extensions(files: list[str], ignored_ext: list[list[str]]) -> list[str]:
+
+def filter_ignored_extensions(files: list[str], ignored_ext: list[str]) -> list[str]:
+    """Filter files whose extension is in ignored_ext, whose basename matches a
+    known junk filename, or which have no extension. Comparison is case-insensitive."""
+    ignored_set = {ext.lower() for ext in ignored_ext}
     filtered_files = []
     for file in files:
-        filename = os.path.basename(file)
-        if not "." in filename:
-            log(f"Ignoring file because of no extension: {filename}")
+        basename = os.path.basename(file)
+        lower = basename.lower()
+        if lower in _junk_filenames:
+            log(f"Ignoring file because of filename: {basename}")
             continue
-        file_ext = filename.split(".")[-1]
-        for ignored_extension in ignored_ext:
-            if file_ext in ignored_extension:
-                log(f"Ignoring file because of extension: {filename}")
-                break
-        else:
-            filtered_files.append(file)
-
+        if "." not in basename:
+            log(f"Ignoring file because of no extension: {basename}")
+            continue
+        file_ext = lower.rsplit(".", 1)[-1]
+        if not file_ext:
+            log(f"Ignoring file because of empty extension: {basename}")
+            continue
+        if file_ext in ignored_set:
+            log(f"Ignoring file because of extension: {basename}")
+            continue
+        filtered_files.append(file)
     return filtered_files

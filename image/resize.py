@@ -10,10 +10,12 @@ def resize_image(image_path: str, max_dimension: int) -> list[int]:
     """
     image = Image.open(image_path)
 
-    # trim transparent pixels
+    # trim transparent pixels (getbbox() returns None for fully-transparent
+    # images, in which case there's nothing to crop)
     box = image.getbbox()
-    image = image.crop(box)
-    image.save(image_path)
+    if box is not None:
+        image = image.crop(box)
+        image.save(image_path)
 
     width, height = image.size
     if width > max_dimension or height > max_dimension:

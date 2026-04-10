@@ -19,24 +19,32 @@ from labels.attributes import ensure_attribute, replace_tag, check_or_update_att
 from labels.extensions import filter_ignored_extensions, junk_files_extensions
 from labels.variants import types_variants, genres_variants, objects_variants
 
-prompt = (
-    "You are a file tagging AI. When asked, write tags for each file in the order they were presented: "
-)
+prompt = ""
+schema_prompt = ""
 
-if tagger_settings.file_label_ai_types:
-    prompt += "content types (Texture, Sprite, Model, VFX, SFX, etc.) (min 1),"
 
-if tagger_settings.file_label_ai_genres:
-    prompt += "detailed genres (min 1),"
+def build_prompts() -> tuple[str, str]:
+    """Build the system prompt and JSON schema prompt from current settings.
+    Called at the start of each invocation so that changes in Settings take
+    effect without restarting Anchorpoint."""
+    p = (
+        "You are a file tagging AI. When asked, write tags for each file in the order they were presented: "
+    )
+    if tagger_settings.file_label_ai_types:
+        p += "content types (Texture, Sprite, Model, VFX, SFX, etc.) (min 1),"
+    if tagger_settings.file_label_ai_genres:
+        p += "detailed genres (min 1),"
+    if tagger_settings.file_label_ai_objects:
+        p += f"objects and other keywords (min {tagger_settings.file_label_ai_objects_min}, max {tagger_settings.file_label_ai_objects_max}), "
+    p += "fill all tags for each file. Use Capitalized Words. IMPORTANT: Never repeat the same tag across different categories — each tag value must appear only once total."
 
-if tagger_settings.file_label_ai_objects:
-    prompt += f"objects and other keywords (min {tagger_settings.file_label_ai_objects_min}, max {tagger_settings.file_label_ai_objects_max}), "
+    rules = tagger_settings.get_naming_rules()
+    if rules:
+        p += "\n\nCustom naming convention rules:\n" + rules
 
-prompt += "fill all tags for each file. Use Capitalized Words. IMPORTANT: Never repeat the same tag across different categories — each tag value must appear only once total."
+    sp = get_file_schema_prompt(get_file_properties())
+    return p, sp
 
-naming_rules = tagger_settings.get_naming_rules()
-if naming_rules:
-    prompt += "\n\nCustom naming convention rules:\n" + naming_rules
 
 ctx: Optional[ap.Context] = None
 start_time = datetime.now()
@@ -53,10 +61,6 @@ all_variants = {
     "AI-Objects": objects_variants
 }
 
-items = get_file_properties()
-
-schema_prompt = get_file_schema_prompt(items)
-
 
 def calculate_file_hash(file_path, hash_algorithm="sha256", length: int = 8):
     hash_func = hashlib.new(hash_algorithm)
@@ -66,9 +70,6 @@ def calculate_file_hash(file_path, hash_algorithm="sha256", length: int = 8):
             hash_func.update(chunk)
 
     return hash_func.hexdigest()[:length]
-
-
-ANTHROPIC_API_KEY = init_anthropic_key()
 
 
 def get_claude_response_files(in_prompt, file_paths: list[str], model=DEFAULT_MODEL) -> list[Any]:
@@ -81,7 +82,7 @@ def get_claude_response_files(in_prompt, file_paths: list[str], model=DEFAULT_MO
     file_descriptions = [clean_character_filename(file_path).replace("\\", "/") for file_path in file_paths]
 
     headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
+        "x-api-key": init_anthropic_key(),
         "anthropic-version": ANTHROPIC_API_VERSION,
         "Content-Type": "application/json"
     }
@@ -204,9 +205,7 @@ def proceed_callback(database):
                 seen_tags = set()
 
                 if tagger_settings.file_label_ai_types:
-                    types = tags.get("types", [])
-                    if "types_additional" in tags:
-                        types += tags["types_additional"]
+                    types = list(tags.get("types", [])) + list(tags.get("types_additional", []))
                     types_tags = aps.AttributeTagList()
                     for k, tag in enumerate(types):
                         types[k] = replace_tag(tag, all_variants["AI-Types"])
@@ -216,12 +215,11 @@ def proceed_callback(database):
                         new_tag = check_or_update_attribute(attributes[0], types[k], database)
                         types_tags.append(new_tag)
 
-                    database.attributes.set_attribute_value(file_path, "AI-Types", types_tags)
+                    if len(types_tags) > 0:
+                        database.attributes.set_attribute_value(file_path, "AI-Types", types_tags)
 
                 if tagger_settings.file_label_ai_genres:
-                    genres = tags.get("genres", [])
-                    if "genres_additional" in tags:
-                        genres += tags["genres_additional"]
+                    genres = list(tags.get("genres", [])) + list(tags.get("genres_additional", []))
                     genres_tags = aps.AttributeTagList()
 
                     for k, tag in enumerate(genres):
@@ -232,7 +230,8 @@ def proceed_callback(database):
                         new_tag = check_or_update_attribute(attributes[1], genres[k], database)
                         genres_tags.append(new_tag)
 
-                    database.attributes.set_attribute_value(file_path, "AI-Genres", genres_tags)
+                    if len(genres_tags) > 0:
+                        database.attributes.set_attribute_value(file_path, "AI-Genres", genres_tags)
 
                 if tagger_settings.file_label_ai_objects:
                     objects = tags.get("objects", [])
@@ -245,7 +244,8 @@ def proceed_callback(database):
                         new_tag = check_or_update_attribute(attributes[2], objects[k], database)
                         objects_tags.append(new_tag)
 
-                    database.attributes.set_attribute_value(file_path, "AI-Objects", objects_tags)
+                    if len(objects_tags) > 0:
+                        database.attributes.set_attribute_value(file_path, "AI-Objects", objects_tags)
             progress2.finish()
 
         progress.finish()
@@ -275,6 +275,9 @@ def main():
     if not tagger_settings.any_file_tags_selected():
         ap.UI().show_error("No tags selected", "Please select at least one tag type in the settings")
         return
+
+    global prompt, schema_prompt
+    prompt, schema_prompt = build_prompts()
 
     global ctx
     ctx = ap.get_context()

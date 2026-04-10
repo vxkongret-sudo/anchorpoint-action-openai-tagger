@@ -1,6 +1,7 @@
 import base64
 import json
 import shutil
+import threading
 from datetime import datetime
 from typing import Any, Union, Optional
 
@@ -24,24 +25,32 @@ from ai.constants import IMAGE_TOKENS_ESTIMATE, INPUT_TOKEN_PRICE, OUTPUT_TOKEN_
 from ai.tokens import count_tokens
 from common.settings import tagger_settings
 
-prompt = (
-    "You are a file tagging AI. When asked, write tags for each file in the order they were presented: "
-)
+prompt = ""
+schema_prompt = ""
 
-if tagger_settings.file_label_ai_types:
-    prompt += "content types (Texture, Sprite, Model, VFX, SFX, etc.) (min 1),"
 
-if tagger_settings.file_label_ai_genres:
-    prompt += "detailed genres (min 1),"
+def build_prompts() -> tuple[str, str]:
+    """Build the system prompt and JSON schema prompt from current settings.
+    Called at the start of each invocation so that Settings changes take effect
+    without restarting Anchorpoint."""
+    p = (
+        "You are a file tagging AI. When asked, write tags for each file in the order they were presented: "
+    )
+    if tagger_settings.file_label_ai_types:
+        p += "content types (Texture, Sprite, Model, VFX, SFX, etc.) (min 1),"
+    if tagger_settings.file_label_ai_genres:
+        p += "detailed genres (min 1),"
+    if tagger_settings.file_label_ai_objects:
+        p += f"objects and other keywords in the image (min {tagger_settings.file_label_ai_objects_min}, max {tagger_settings.file_label_ai_objects_max}), "
+    p += "fill all tags for each image. Use Capitalized Words. IMPORTANT: Never repeat the same tag across different categories — each tag value must appear only once total."
 
-if tagger_settings.file_label_ai_objects:
-    prompt += f"objects and other keywords in the image (min {tagger_settings.file_label_ai_objects_min}, max {tagger_settings.file_label_ai_objects_max}), "
+    rules = tagger_settings.get_naming_rules()
+    if rules:
+        p += "\n\nCustom naming convention rules:\n" + rules
 
-prompt += "fill all tags for each image. Use Capitalized Words. IMPORTANT: Never repeat the same tag across different categories — each tag value must appear only once total."
+    sp = get_file_schema_prompt(get_file_properties())
+    return p, sp
 
-naming_rules = tagger_settings.get_naming_rules()
-if naming_rules:
-    prompt += "\n\nCustom naming convention rules:\n" + naming_rules
 
 output_token_count = 200
 
@@ -54,9 +63,8 @@ all_variants = {
     "AI-Objects": objects_variants
 }
 
-items = get_file_properties()
-
-schema_prompt = get_file_schema_prompt(items)
+# Guards mutations of last_index / generating_previews_count across async workers
+_preview_index_lock = threading.Lock()
 
 
 def calculate_file_hash(file_path, hash_algorithm="sha256", length: int = 8):
@@ -87,7 +95,8 @@ def get_preview_image(workspace_id, input_path, output_folder):
     file_hash = calculate_file_hash(input_path)
 
     # get the proper filename, rename it because the generated PNG file has a _pt appendix
-    file_name = os.path.basename(input_path).split(".")[0]
+    # Use splitext to preserve multi-dot filenames like "model.v2.fbx" (stem="model.v2")
+    file_name = os.path.splitext(os.path.basename(input_path))[0]
 
     image_path = os.path.join(output_folder, f"{file_name}_{file_hash}_pt.png")
 
@@ -125,9 +134,6 @@ def get_preview_image(workspace_id, input_path, output_folder):
     return image_path
 
 
-ANTHROPIC_API_KEY = init_anthropic_key()
-
-
 def get_claude_response_images(in_prompt, image_paths: list[str], model=DEFAULT_MODEL) -> list[Any]:
     if len(image_paths) == 0 or len(image_paths) > images_per_request:
         raise ValueError(f"The number of images should be between 1 and {images_per_request}")
@@ -153,7 +159,7 @@ def get_claude_response_images(in_prompt, image_paths: list[str], model=DEFAULT_
         })
 
     headers = {
-        "x-api-key": ANTHROPIC_API_KEY,
+        "x-api-key": init_anthropic_key(),
         "anthropic-version": ANTHROPIC_API_VERSION,
         "Content-Type": "application/json"
     }
@@ -274,9 +280,7 @@ def proceed_callback(database):
                 seen_tags = set()
 
                 if tagger_settings.file_label_ai_types:
-                    types = tags.get("types", [])
-                    if "types_additional" in tags:
-                        types += tags["types_additional"]
+                    types = list(tags.get("types", [])) + list(tags.get("types_additional", []))
                     types_tags = aps.AttributeTagList()
                     for k, tag in enumerate(types):
                         types[k] = replace_tag(tag, all_variants["AI-Types"])
@@ -286,12 +290,11 @@ def proceed_callback(database):
                         new_tag = check_or_update_attribute(attributes[0], types[k], database)
                         types_tags.append(new_tag)
 
-                    database.attributes.set_attribute_value(original_files[p[j]], "AI-Types", types_tags)
+                    if len(types_tags) > 0:
+                        database.attributes.set_attribute_value(original_files[p[j]], "AI-Types", types_tags)
 
                 if tagger_settings.file_label_ai_genres:
-                    genres = tags.get("genres", [])
-                    if "genres_additional" in tags:
-                        genres += tags["genres_additional"]
+                    genres = list(tags.get("genres", [])) + list(tags.get("genres_additional", []))
                     genres_tags = aps.AttributeTagList()
 
                     for k, tag in enumerate(genres):
@@ -302,7 +305,8 @@ def proceed_callback(database):
                         new_tag = check_or_update_attribute(attributes[1], genres[k], database)
                         genres_tags.append(new_tag)
 
-                    database.attributes.set_attribute_value(original_files[p[j]], "AI-Genres", genres_tags)
+                    if len(genres_tags) > 0:
+                        database.attributes.set_attribute_value(original_files[p[j]], "AI-Genres", genres_tags)
 
                 if tagger_settings.file_label_ai_objects:
                     objects = tags.get("objects", [])
@@ -315,7 +319,8 @@ def proceed_callback(database):
                         new_tag = check_or_update_attribute(attributes[2], objects[k], database)
                         objects_tags.append(new_tag)
 
-                    database.attributes.set_attribute_value(original_files[p[j]], "AI-Objects", objects_tags)
+                    if len(objects_tags) > 0:
+                        database.attributes.set_attribute_value(original_files[p[j]], "AI-Objects", objects_tags)
             progress2.finish()
 
         progress.finish()
@@ -332,27 +337,40 @@ last_index = -1
 generating_previews_count = 0
 generating_previews_progress: Optional[ap.Progress] = None
 cancel_generating_previews = False  # hack
+_finish_invoked = False
 ctx: Optional[ap.Context] = None
 start_time = datetime.now()
 previews_start_time = datetime.now()
 
 
 def proceed_generating_previews(workspace_id, database, output_folder):
+    """Pick up where the batch left off: claim the next unassigned file under
+    the lock, then kick off its preview generation. Returns silently if the
+    run is cancelled or all files have been handed out."""
     if cancel_generating_previews:
         return
     if generating_previews_progress.canceled:
         return
-    if generating_previews_count > len(file_input_paths):
-        return
-
-    if generating_previews_count == len(file_input_paths):
+    if generating_previews_count >= len(file_input_paths):
+        # All previews done — finalise once (guarded so concurrent callers
+        # don't double-invoke finish_generating_previews).
+        global _finish_invoked
+        with _preview_index_lock:
+            if _finish_invoked:
+                return
+            _finish_invoked = True
         finish_generating_previews(previews, database)
         return
 
-    if last_index >= len(file_input_paths) - 1:
-        return
+    # Atomically claim the next file index.
+    global last_index
+    with _preview_index_lock:
+        if last_index >= len(file_input_paths) - 1:
+            return
+        last_index += 1
+        next_index = last_index
 
-    input_path = file_input_paths[last_index + 1]
+    input_path = file_input_paths[next_index]
     generate_preview_async(workspace_id, input_path, output_folder, database)
 
 
@@ -381,27 +399,40 @@ def generate_previews(workspace_id, input_paths, database):
     global file_input_paths
     file_input_paths = input_paths
     log("Output folder: {}".format(output_folder.replace("\\", "\\\\")))
-    # start generating first 10 previews
-    for i in range(min(images_per_request, len(input_paths))):
+
+    # Seed per-run state atomically before firing the initial batch so any
+    # async worker that finishes quickly can claim the next index correctly.
+    global last_index, generating_previews_count, cancel_generating_previews, _finish_invoked
+    batch_size = min(images_per_request, len(input_paths))
+    with _preview_index_lock:
+        last_index = batch_size - 1
+        generating_previews_count = 0
+        cancel_generating_previews = False
+        _finish_invoked = False
+
+    for i in range(batch_size):
         input_path = input_paths[i]
         ctx.run_async(generate_preview_async, workspace_id, input_path, output_folder, database)
 
 
 def generate_preview_async(workspace_id, input_path, output_folder, database):
-    global last_index
-    if last_index >= len(file_input_paths) - 1:
-        return
-    last_index += 1
+    """Generate one preview. The caller (either generate_previews for the
+    initial batch or proceed_generating_previews for subsequent files) is
+    responsible for having already advanced last_index, so this function only
+    needs to process the file it was handed."""
     global cancel_generating_previews
     if cancel_generating_previews:
         return
     image_path = get_preview_image(workspace_id, input_path, output_folder)
-    if not image_path == "":
+    if image_path != "":
         previews.append(image_path)
         original_files[image_path] = input_path
 
     global generating_previews_count
-    generating_previews_count += 1
+    with _preview_index_lock:
+        generating_previews_count += 1
+        done_count = generating_previews_count
+
     log(f"Progress cancelled: {generating_previews_progress.canceled}")
     if generating_previews_progress.canceled:
         cancel_generating_previews = True
@@ -409,7 +440,7 @@ def generate_preview_async(workspace_id, input_path, output_folder, database):
         # ap.UI().navigate_to_folder(initial_folder)
         return
 
-    generating_previews_progress.report_progress(generating_previews_count / len(file_input_paths))
+    generating_previews_progress.report_progress(done_count / len(file_input_paths))
     proceed_generating_previews(workspace_id, database, output_folder)
 
 
@@ -492,6 +523,9 @@ def main():
     if not tagger_settings.any_file_tags_selected():
         ap.UI().show_error("No tags selected", "Please select at least one tag type in the settings")
         return
+
+    global prompt, schema_prompt
+    prompt, schema_prompt = build_prompts()
 
     global ctx
     ctx = ap.get_context()
