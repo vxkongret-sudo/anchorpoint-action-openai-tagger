@@ -9,7 +9,7 @@ action:
   name: "Tag File Content with AI"
 
   version: 1
-  id: "ap::open_ai_tagger::file"
+  id: "ap::haiku_rename::file"
   category: "ai"
   type: python
   author: "Hermesiss"

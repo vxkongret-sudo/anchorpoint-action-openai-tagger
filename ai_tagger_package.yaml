@@ -11,7 +11,7 @@ action:
 
   #Optional Properties
   version: 3
-  id: "ap::package::open_ai_tagger"
+  id: "ap::package::haiku_rename"
   category: "ai"
   type: package
   enable: true
@@ -21,9 +21,9 @@ action:
   settings: package_settings.py
 
   icon:
-    path: "icons/openai-logo.svg"
+    path: "icons/haiku-logo.svg"
 
   actions:
-    - ap::open_ai_tagger::folder
-    - ap::open_ai_tagger::file
-    - ap::open_ai_tagger::file_simple
+    - ap::haiku_rename::folder
+    - ap::haiku_rename::file
+    - ap::haiku_rename::file_simple
